@@ -1,6 +1,6 @@
 // Package samplereader implements a reader mechanism that allows
-// multiple callers to sample the entire contents of a source reader,
-// while only reading from the source reader once.
+// multiple callers to sample some or the entire contents of a
+// source reader, while only reading from the source reader once.
 package samplereader
 
 import (
@@ -10,32 +10,33 @@ import (
 	"sync"
 )
 
-// SampleReader provides a somewhat specialized reader/sampling
+// Source provides a somewhat specialized reader/sampling
 // mechanism. It takes a source io.Reader, and allows many callers
 // to invoke NewReader, providing each with a reader that returns
 // the same data as the source reader. The data read from the source
 // is cached. Once Seal is invoked, no new readers can be created.
 // When there's only one reader remaining, the cache is dispensed
 // with, and that reader reads remaining data directly from source.
-type SampleReader struct {
+type Source struct {
 	src    io.Reader
 	mu     sync.Mutex
 	sealed bool
 	closed bool
 	count  int
 	buf    *bytes.Buffer
+	eof    bool
 }
 
-func New(r io.Reader) *SampleReader {
-	//return &SampleReader{src: r, b: make([]byte, 0, 1024)}
-	return &SampleReader{src: r, buf: &bytes.Buffer{}}
+// NewSource returns a new source with r as the underlying reader.
+func NewSource(r io.Reader) *Source {
+	return &Source{src: r, buf: &bytes.Buffer{}}
 }
 
-// ErrSealed is returned by SampleReader.NewReader if it is
+// ErrSealed is returned by Source.NewReader if it is
 // already sealed.
 var ErrSealed = errors.New("already sealed")
 
-func (s *SampleReader) NewReader() (io.ReadCloser, error) {
+func (s *Source) NewReader() (io.ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -47,7 +48,7 @@ func (s *SampleReader) NewReader() (io.ReadCloser, error) {
 	return &reader{s: s}, nil
 }
 
-func (s *SampleReader) readAt(p []byte, off int64) (n int, err error) {
+func (s *Source) readAt(p []byte, off int64) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -109,7 +110,7 @@ func (s *SampleReader) readAt(p []byte, off int64) (n int, err error) {
 	//return n, err
 }
 
-func (s *SampleReader) close() error {
+func (s *Source) close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -128,13 +129,13 @@ func (s *SampleReader) close() error {
 }
 
 // Seal results
-func (s *SampleReader) Seal() {
+func (s *Source) Seal() {
 	s.mu.Lock()
 	s.sealed = true
 	s.mu.Unlock()
 }
 
-//func (s *SampleReader) Close() error {
+//func (s *Source) Close() error {
 //	s.mu.Lock()
 //	s.closed = true
 //	s.mu.Unlock()
@@ -142,7 +143,7 @@ func (s *SampleReader) Seal() {
 //}
 
 type reader struct {
-	s   *SampleReader
+	s   *Source
 	off int // needs to be atomic
 }
 

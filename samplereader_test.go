@@ -2,11 +2,14 @@ package samplereader_test
 
 import (
 	"bytes"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +26,7 @@ func TestSampleReader(t *testing.T) {
 	require.NoError(t, err)
 
 	br := bytes.NewReader(b)
-	sr := samplereader.New(br)
+	sr := samplereader.NewSource(br)
 	require.NoError(t, err)
 
 	r, err := sr.NewReader()
@@ -36,14 +39,14 @@ func TestSampleReader(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, b, gotB)
-
 }
 
-func TestSampleReader2(t *testing.T) {
+func TestSampleReaderConcurrent(t *testing.T) {
 	b, err := ioutil.ReadFile("testdata/sample1.csv")
 	require.NoError(t, err)
 
-	sr := samplereader.New(bytes.NewReader(b))
+	rc := &readCloser{Reader: bytes.NewReader(b)}
+	sr := samplereader.NewSource(rc)
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
@@ -51,7 +54,11 @@ func TestSampleReader2(t *testing.T) {
 		i := i
 		r, err := sr.NewReader()
 		require.NoError(t, err)
+
 		g.Go(func() error {
+			defer func() {
+				assert.NoError(t, r.Close())
+			}()
 			// Add some jitter
 			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(300)))
 
@@ -70,9 +77,21 @@ func TestSampleReader2(t *testing.T) {
 		})
 	}
 	sr.Seal()
-
 	err = g.Wait()
 	assert.NoError(t, err)
+	assert.Equal(t, 1, rc.closed)
+}
+
+func TestSeal(t *testing.T) {
+	sr := samplereader.NewSource(strings.NewReader(""))
+	r, err := sr.NewReader()
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	sr.Seal()
+	r, err = sr.NewReader()
+	require.Error(t, err)
+	require.Nil(t, r)
 }
 
 func TestGenerateSample(t *testing.T) {
@@ -94,4 +113,22 @@ func generateSampleData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+type readCloser struct {
+	io.Reader
+	closed int
+	mu     sync.Mutex
+}
+
+func (rc *readCloser) Close() error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if c, ok := rc.Reader.(io.ReadCloser); ok {
+		err := c.Close()
+		rc.closed++
+		return err
+	}
+	rc.closed++
+	return nil
 }
