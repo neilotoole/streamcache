@@ -20,7 +20,11 @@ import (
 	"github.com/neilotoole/samplereader"
 )
 
-const numSampleRows = 100000
+const (
+	numSampleRows = 1000000
+	numG          = 10000
+	gitterFactor  = 500
+)
 
 var _ io.ReadCloser = (*samplereader.ReadCloser)(nil)
 
@@ -57,7 +61,7 @@ func TestConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < numG; i++ {
 		r, err := src.NewReadCloser()
 		require.NoError(t, err)
 
@@ -67,7 +71,7 @@ func TestConcurrent(t *testing.T) {
 			}()
 
 			// Add some jitter
-			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(5000)))
+			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(gitterFactor)))
 
 			gotB, err := ioutil.ReadAll(r)
 			if err != nil {

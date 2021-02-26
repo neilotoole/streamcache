@@ -53,12 +53,12 @@ type Source struct {
 	mu     sync.Mutex
 	sealed bool
 	count  int
-	buf    *buffer
+	buf    []byte
 }
 
 // NewSource returns a new source with r as the underlying reader.
 func NewSource(r io.Reader) *Source {
-	return &Source{src: r, buf: &buffer{}}
+	return &Source{src: r, buf: make([]byte, 0, 512)}
 }
 
 // NewReadCloser returns a new ReadCloser for Source. It is the caller's
@@ -80,10 +80,10 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	defer s.mu.Unlock()
 
 	end := int(offset) + len(p)
-	bufLen := len(s.buf.b)
+	bufLen := len(s.buf)
 	if end < bufLen {
 		// We already have the data in the buf cache
-		return copy(p, s.buf.b[offset:int(offset)+len(p)]), nil
+		return copy(p, s.buf[offset:int(offset)+len(p)]), nil
 	}
 
 	need := end - bufLen
@@ -91,10 +91,11 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	n, err = s.src.Read(tmp)
 
 	if n > 0 {
-		_, _ = s.buf.Write(tmp[0:n]) // can't error
+		s.buf = append(s.buf, p...)
+		return len(p), nil
 	}
 
-	bufLen = len(s.buf.b)
+	bufLen = len(s.buf)
 
 	if int(offset) >= bufLen {
 		return 0, err
@@ -104,7 +105,7 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 		end = bufLen
 	}
 
-	return copy(p, s.buf.b[offset:end]), err
+	return copy(p, s.buf[offset:end]), err
 }
 
 func (s *Source) close(rc *ReadCloser) error {
@@ -134,7 +135,7 @@ func (s *Source) close(rc *ReadCloser) error {
 	// to "direct mode" for that final reader.
 	// The bytes from buf are the "penultimate" bytes, because the
 	// "ultimate" bytes come from s.src itself.
-	penultimateBytes := s.buf.b[rc.offset:]
+	penultimateBytes := s.buf[rc.offset:]
 
 	// It is safe to modify rc.finalReadCloser because rc calls this
 	// close() method already being inside its own mu.Lock.
@@ -221,15 +222,4 @@ func (fc *finalReadCloser) Close() error {
 	}
 
 	return nil
-}
-
-// buffer is a basic implementation of io.Writer.
-type buffer struct {
-	b []byte
-}
-
-// Write implements io.Writer.
-func (b *buffer) Write(p []byte) (n int, err error) {
-	b.b = append(b.b, p...)
-	return len(p), nil
 }
