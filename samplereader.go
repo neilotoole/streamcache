@@ -7,7 +7,8 @@
 // multiple callers to sample some or all of the of the contents of a
 // source reader, while only reading from the source reader once.
 //
-// This is admittedly a rather arcane need.
+// This is, admittedly, a rather arcane situation. But, here it is:
+//
 // Let's say we're reading from stdin. For example:
 //
 //  $ cat myfile.ext | myprogram
