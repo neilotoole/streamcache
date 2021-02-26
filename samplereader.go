@@ -36,6 +36,7 @@ func NewSource(r io.Reader) *Source {
 // already sealed.
 var ErrSealed = errors.New("already sealed")
 
+// NewReader returns a new reader for Source.
 func (s *Source) NewReader() (io.ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

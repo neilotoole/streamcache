@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +40,8 @@ func TestSampleReader(t *testing.T) {
 }
 
 func TestSampleReaderConcurrent(t *testing.T) {
-	b, err := ioutil.ReadFile("testdata/sample1.csv")
+	f := generateSampleFile(t, 10000)
+	b, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
 	rc := &readCloser{Reader: bytes.NewReader(b)}
@@ -50,7 +49,7 @@ func TestSampleReaderConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10000; i++ {
 		i := i
 		r, err := sr.NewReader()
 		require.NoError(t, err)
@@ -59,8 +58,9 @@ func TestSampleReaderConcurrent(t *testing.T) {
 			defer func() {
 				assert.NoError(t, r.Close())
 			}()
+
 			// Add some jitter
-			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(300)))
+			//time.Sleep(time.Nanosecond * time.Duration(rand.Intn(1000)))
 
 			gotB, err := ioutil.ReadAll(r)
 			if err != nil {
@@ -69,7 +69,7 @@ func TestSampleReaderConcurrent(t *testing.T) {
 			}
 
 			if bytes.Equal(b, gotB) {
-				t.Logf("goroutine %d: SUCCESS", i)
+				t.Logf("goroutine %d: SUCCESS", i) // FIXME: remove
 				return nil
 			}
 			assert.Equal(t, b, gotB)
@@ -91,7 +91,36 @@ func TestSeal(t *testing.T) {
 	sr.Seal()
 	r, err = sr.NewReader()
 	require.Error(t, err)
+	require.Equal(t, samplereader.ErrSealed, err)
 	require.Nil(t, r)
+}
+
+func TestClose(t *testing.T) {
+	f := generateSampleFile(t, 1000)
+	wantB, err := ioutil.ReadAll(f)
+	require.NoError(t, err)
+
+	rc := &readCloser{Reader: f}
+	src := samplereader.NewSource(rc)
+
+	r1, err := src.NewReader()
+	require.NoError(t, err)
+
+	gotB1, err := ioutil.ReadAll(r1)
+	require.NoError(t, err)
+	require.Equal(t, wantB, gotB1)
+	require.NoError(t, r1.Close())
+	require.Equal(t, 0, rc.closed)
+
+	r2, err := src.NewReader()
+	require.NoError(t, err)
+	src.Seal()
+
+	gotB2, err := ioutil.ReadAll(r2)
+	require.NoError(t, err)
+	require.Equal(t, wantB, gotB2)
+	require.NoError(t, r1.Close())
+	require.Equal(t, 1, rc.closed)
 }
 
 func TestGenerateSample(t *testing.T) {
@@ -113,6 +142,25 @@ func generateSampleData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// generateSampleFile generates a temp file of sample data with the
+// specified number of rows. It is the caller's responsibility to
+// close the file. Note that the file is removed by t.Cleanup.
+func generateSampleFile(t *testing.T, rows int) *os.File {
+	f, err := ioutil.TempFile("", "")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, os.RemoveAll(f.Name()))
+	})
+
+	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z\n"
+	for i := 0; i < rows; i++ {
+		_, err = f.WriteString(strconv.Itoa(i) + "," + line)
+		require.NoError(t, err)
+	}
+
+	return f
 }
 
 type readCloser struct {
