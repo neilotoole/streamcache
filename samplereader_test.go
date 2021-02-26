@@ -56,7 +56,7 @@ func TestConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 		i := i
 		r, err := src.NewReadCloser()
 		require.NoError(t, err)
@@ -83,6 +83,7 @@ func TestConcurrent(t *testing.T) {
 			return nil
 		})
 	}
+
 	src.Seal()
 	err = g.Wait()
 	assert.NoError(t, err)

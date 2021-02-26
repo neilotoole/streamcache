@@ -30,6 +30,7 @@ package samplereader
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -44,10 +45,8 @@ type Source struct {
 	src    io.Reader
 	mu     sync.Mutex
 	sealed bool
-	closed bool
 	count  int
 	buf    *bytes.Buffer
-	eof    bool
 }
 
 // NewSource returns a new source with r as the underlying reader.
@@ -115,8 +114,8 @@ func (s *Source) close(rc *ReadCloser) error {
 
 	switch s.count {
 	default:
-		// There's still open reader instances, so we don't
-		// close the underlying reader.
+		// There's still more than one open reader instances, so we
+		// don't close the underlying reader.
 		return nil
 	case 0:
 		if c, ok := s.src.(io.Closer); ok {
@@ -125,6 +124,20 @@ func (s *Source) close(rc *ReadCloser) error {
 		return nil
 	case 1:
 		// Continues below
+	}
+
+	fmt.Printf("\n\nswitching to final reader\n\n")
+	// Now there's only one final reader left, so we switch
+	// to "direct mode" for that final reader.
+	// The bytes from buf are the "penultimate" bytes, because the
+	// "ultimate" bytes come from s.src itself.
+	penultimateBytes := s.buf.Bytes()[rc.offset:]
+
+	// Safe to modify rc.final because rc calls this close() method
+	// already being inside its own mu.Lock.
+	rc.finalReader = &finalReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(penultimateBytes), s.src),
+		src:    s.src,
 	}
 
 	return nil
@@ -138,7 +151,8 @@ func (s *Source) Seal() {
 	s.mu.Unlock()
 }
 
-// ReadCloser is returned by Source.NewReadCloser.
+// ReadCloser is returned by Source.NewReadCloser. It is the
+// responsibility of the receiver to close the ReadCloser.
 type ReadCloser struct {
 	mu        sync.Mutex
 	s         *Source
@@ -146,12 +160,12 @@ type ReadCloser struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	// final is only set if this ReadCloser becomes the
+	// finalReader is only set if this ReadCloser becomes the
 	// last-man-standing of the parent Source's spawned ReadCloser
-	// children. If final is set, then final will be used by Read
-	// to read out the rest of data from the parent Source's underlying
-	// Reader.
-	final io.Reader
+	// children. If finalReader is set, then finalReader will be used
+	// by Read to read out the rest of data from the parent Source's
+	// underlying Reader.
+	finalReader io.Reader
 }
 
 // Read implements io.Reader.
@@ -159,27 +173,48 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	if rc.final == nil {
+	if rc.finalReader == nil {
+		// We're not in "last-man-standing" mode, so just continue
+		// as normal.
 		n, err = rc.s.readAt(p, int64(rc.offset))
 		rc.offset += n
 		return n, err
 	}
 
-	return rc.final.Read(p)
+	// This ReadCloser is in "last-man-standing" mode, so we switch
+	// to "direct mode".
+	return rc.finalReader.Read(p)
 }
 
-// Close closes this reader. If the parent Source is not sealed, this
-// method is effectively a no-op. If the parent Source is sealed and
-// the is the last remaining reader, the parent Source's underlying
-// io.Reader is closed (if it implements io.Closer),and this ReadCloser
+// Close closes this ReadCloser. If the parent Source is not sealed,
+// this method is effectively a no-op. If the parent Source is sealed
+// and this is the last remaining reader, the parent Source's underlying
+// io.Reader is closed (if it implements io.Closer), and this ReadCloser
 // switches to "direct mode" reading for the remaining data.
-// Note that subsequent calls are no-op and return the same result.
+// Note that subsequent calls to this method are no-op and return the
+// same result as the first call.
 func (rc *ReadCloser) Close() error {
 	rc.closeOnce.Do(func() {
 		rc.closeErr = rc.s.close(rc)
 	})
 
 	return rc.closeErr
+}
+
+// finalReadCloser is used by the final child of Source.NewReader
+// to wrap up the reading/closing without the use of the cache.
+type finalReadCloser struct {
+	io.Reader
+	src io.Reader
+}
+
+// Close implements io.Closer.
+func (fc *finalReadCloser) Close() error {
+	if c, ok := fc.src.(io.Closer); ok {
+		return c.Close()
+	}
+
+	return nil
 }
 
 // buffer is a basic implementation of io.Writer.
