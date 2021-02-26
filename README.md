@@ -1,4 +1,4 @@
-# `samplereader`: arcane cached reader
+# samplereader: arcane cached reader
 
 Package `samplereader` addresses an arcane scenario: multiple readers
 want to sample the start of an input stream (from an `io.Reader`),
