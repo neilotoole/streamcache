@@ -4,7 +4,7 @@ Package `samplereader` addresses an arcane scenario: multiple readers
 want to sample the start of an input stream (from an `io.Reader`),
 which involves caching, but after the samplers are satisfied,
 there's no need to maintain that cache and its memory overhead.
-Package samplereader implements a reader mechanism that allows
+Package `samplereader` implements a reader mechanism that allows
 multiple callers to sample some or all of the of the contents of a
 source reader, while only reading from the source reader once.
 
