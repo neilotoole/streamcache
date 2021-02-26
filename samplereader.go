@@ -1,5 +1,5 @@
 // Package samplereader implements a reader mechanism that allows
-// multiple callers to sample some or the entire contents of a
+// multiple callers to sample some or all of the of the contents of a
 // source reader, while only reading from the source reader once.
 //
 // This is admittedly a rather arcane need.
@@ -8,7 +8,8 @@
 //  # cat myfile.ext | myprogram
 //
 // In this scenario, myprogram wants to detect the type of data
-// in the file/pipe, and then print it out. The input file could be,
+// in the file/pipe, and then print it out. That sampling could be done
+// in a separate goroutine per sampler type. The input file could be,
 // let's say, a CSV file, or a TSV file.
 //
 // The obvious approach is to inspect the first few lines of the
@@ -20,8 +21,9 @@
 // underlying io.Reader (os.Stdin in this scenario), and spawn multiple
 // readers, each of which can operate independently, in their own
 // goroutines if desired. The underlying source (again, os.Stdin in this
-// scenario) will only be read from once, but its data is available to
+// scenario) will only be read from, but its data is available to
 // multiple readers, because that data is cached in memory.
+//
 // That is, until there's only one final reader left, (after invoking
 // Source.Seal) at which point the cache is discarded, and
 // the final reader reads straight from the underlying source.
@@ -147,7 +149,7 @@ func (s *Source) Seal() {
 }
 
 // ReadCloser is returned by Source.NewReadCloser. It is the
-// responsibility of the receiver to close the ReadCloser.
+// responsibility of the receiver to close the returned ReadCloser.
 type ReadCloser struct {
 	mu        sync.Mutex
 	s         *Source
@@ -157,9 +159,9 @@ type ReadCloser struct {
 
 	// finalReadCloser is only set if this ReadCloser becomes the
 	// last-man-standing of the parent Source's spawned ReadCloser
-	// children. If finalReadCloser is set, then finalReadCloser will be used
-	// by Read to read out the rest of data from the parent Source's
-	// underlying Reader.
+	// children. If finalReadCloser is set, then finalReadCloser will be
+	// used by Read to read out the rest of data from the parent
+	// Source's underlying Reader.
 	finalReadCloser io.Reader
 }
 
@@ -186,6 +188,7 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 // and this is the last remaining reader, the parent Source's underlying
 // io.Reader is closed (if it implements io.Closer), and this ReadCloser
 // switches to "direct mode" reading for the remaining data.
+//
 // Note that subsequent calls to this method are no-op and return the
 // same result as the first call.
 func (rc *ReadCloser) Close() error {
@@ -213,7 +216,6 @@ func (fc *finalReadCloser) Close() error {
 }
 
 // buffer is a basic implementation of io.Writer.
-// FIXME: are we using buffer?
 type buffer struct {
 	b []byte
 }

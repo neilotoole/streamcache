@@ -20,24 +20,25 @@ import (
 	"github.com/neilotoole/samplereader"
 )
 
-const sampleRows = 100000
+const numSampleRows = 100000
 
 var _ io.ReadCloser = (*samplereader.ReadCloser)(nil)
 
-func TestSimple(t *testing.T) {
-	f := generateSampleFile(t, sampleRows)
-	rc := &readCloser{Reader: f}
-	src := samplereader.NewSource(rc)
+func TestBasic(t *testing.T) {
+	f := generateSampleFile(t, numSampleRows)
+	rcr := &readCloseRecorder{Reader: f}
+	src := samplereader.NewSource(rcr)
 	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
 	r, err := src.NewReadCloser()
 	require.NoError(t, err)
+
 	src.Seal()
 
 	defer func() {
 		assert.NoError(t, r.Close())
-		assert.Equal(t, 1, rc.closed)
+		assert.Equal(t, 1, rcr.closed)
 	}()
 
 	gotB, err := ioutil.ReadAll(r)
@@ -47,12 +48,12 @@ func TestSimple(t *testing.T) {
 }
 
 func TestConcurrent(t *testing.T) {
-	f := generateSampleFile(t, sampleRows)
+	f := generateSampleFile(t, numSampleRows)
 	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
-	rc := &readCloser{Reader: bytes.NewReader(wantB)}
-	src := samplereader.NewSource(rc)
+	rcr := &readCloseRecorder{Reader: bytes.NewReader(wantB)}
+	src := samplereader.NewSource(rcr)
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
@@ -80,18 +81,20 @@ func TestConcurrent(t *testing.T) {
 	}
 
 	src.Seal()
+
 	err = g.Wait()
 	assert.NoError(t, err)
-	assert.Equal(t, 1, rc.closed)
+	assert.Equal(t, 1, rcr.closed)
 }
 
 func TestSeal(t *testing.T) {
-	src := samplereader.NewSource(strings.NewReader(""))
+	src := samplereader.NewSource(strings.NewReader("anything"))
 	r, err := src.NewReadCloser()
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
 	src.Seal()
+
 	r, err = src.NewReadCloser()
 	require.Error(t, err)
 	require.Equal(t, samplereader.ErrSealed, err)
@@ -99,12 +102,12 @@ func TestSeal(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	f := generateSampleFile(t, sampleRows)
+	f := generateSampleFile(t, numSampleRows)
 	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
-	rc := &readCloser{Reader: f}
-	src := samplereader.NewSource(rc)
+	rcr := &readCloseRecorder{Reader: f}
+	src := samplereader.NewSource(rcr)
 
 	r1, err := src.NewReadCloser()
 	require.NoError(t, err)
@@ -113,7 +116,7 @@ func TestClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, wantB, gotB1)
 	require.NoError(t, r1.Close())
-	require.Equal(t, 0, rc.closed)
+	require.Equal(t, 0, rcr.closed)
 
 	r2, err := src.NewReadCloser()
 	require.NoError(t, err)
@@ -123,7 +126,7 @@ func TestClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, wantB, gotB2)
 	require.NoError(t, r2.Close())
-	require.Equal(t, 1, rc.closed)
+	require.Equal(t, 1, rcr.closed)
 }
 
 // generateSampleFile generates a temp file of sample data with the
@@ -138,6 +141,9 @@ func generateSampleFile(t *testing.T, rows int) *os.File {
 
 	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z\n"
 	for i := 0; i < rows; i++ {
+		// Actual data lines will look like:
+		//  1,A,B,C...
+		//  2,A,B,C...
 		_, err = f.WriteString(strconv.Itoa(i) + "," + line)
 		require.NoError(t, err)
 	}
@@ -145,22 +151,26 @@ func generateSampleFile(t *testing.T, rows int) *os.File {
 	return f
 }
 
-// readCloser is used to verify that Close was invoked the
+// readCloseRecorder is used to verify that Close was invoked an
 // expected number of times.
-type readCloser struct {
+type readCloseRecorder struct {
 	mu sync.Mutex
 	io.Reader
 	closed int
 }
 
-func (rc *readCloser) Close() error {
+// Close implements io.Close, and increments its closed field each
+// time that Close is invoked.
+func (rc *readCloseRecorder) Close() error {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
+
 	if c, ok := rc.Reader.(io.ReadCloser); ok {
 		err := c.Close()
 		rc.closed++
 		return err
 	}
+
 	rc.closed++
 	return nil
 }
