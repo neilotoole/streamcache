@@ -57,7 +57,6 @@ func TestConcurrent(t *testing.T) {
 
 	g := &errgroup.Group{}
 	for i := 0; i < 1000; i++ {
-		i := i
 		r, err := src.NewReadCloser()
 		require.NoError(t, err)
 
@@ -75,10 +74,6 @@ func TestConcurrent(t *testing.T) {
 				return err
 			}
 
-			if bytes.Equal(wantB, gotB) {
-				t.Logf("goroutine %d: SUCCESS", i) // FIXME: remove
-				return nil
-			}
 			assert.Equal(t, wantB, gotB)
 			return nil
 		})

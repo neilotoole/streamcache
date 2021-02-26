@@ -30,7 +30,6 @@ package samplereader
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 )
@@ -46,12 +45,12 @@ type Source struct {
 	mu     sync.Mutex
 	sealed bool
 	count  int
-	buf    *bytes.Buffer
+	buf    *buffer
 }
 
 // NewSource returns a new source with r as the underlying reader.
 func NewSource(r io.Reader) *Source {
-	return &Source{src: r, buf: &bytes.Buffer{}}
+	return &Source{src: r, buf: &buffer{}}
 }
 
 // NewReadCloser returns a new ReadCloser for Source. It is the caller's
@@ -73,34 +72,31 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	defer s.mu.Unlock()
 
 	end := int(offset) + len(p)
-	bLen := s.buf.Len()
-	if end < bLen {
-		// We already have the data
-		b := s.buf.Bytes()
-		copy(p, b[offset:int(offset)+len(p)])
-		return len(p), nil
+	bufLen := len(s.buf.b)
+	if end < bufLen {
+		// We already have the data in the buf cache
+		return copy(p, s.buf.b[offset:int(offset)+len(p)]), nil
 	}
 
-	need := end - bLen
+	need := end - bufLen
 	tmp := make([]byte, need)
 	n, err = s.src.Read(tmp)
 
 	if n > 0 {
-		_, _ = s.buf.Write(tmp[0:n])
+		_, _ = s.buf.Write(tmp[0:n]) // can't error
 	}
 
-	if int(offset) >= s.buf.Len() {
+	bufLen = len(s.buf.b)
+
+	if int(offset) >= bufLen {
 		return 0, err
 	}
 
-	if end > s.buf.Len() {
-		end = s.buf.Len()
+	if end > bufLen {
+		end = bufLen
 	}
 
-	x := s.buf.Bytes()[offset:end]
-	n = copy(p, x)
-
-	return n, err
+	return copy(p, s.buf.b[offset:end]), err
 }
 
 func (s *Source) close(rc *ReadCloser) error {
@@ -126,16 +122,15 @@ func (s *Source) close(rc *ReadCloser) error {
 		// Continues below
 	}
 
-	fmt.Printf("\n\nswitching to final reader\n\n")
 	// Now there's only one final reader left, so we switch
 	// to "direct mode" for that final reader.
 	// The bytes from buf are the "penultimate" bytes, because the
 	// "ultimate" bytes come from s.src itself.
-	penultimateBytes := s.buf.Bytes()[rc.offset:]
+	penultimateBytes := s.buf.b[rc.offset:]
 
-	// Safe to modify rc.final because rc calls this close() method
-	// already being inside its own mu.Lock.
-	rc.finalReader = &finalReadCloser{
+	// Safe to modify rc.finalReadCloser because rc calls this close()
+	// method already being inside its own mu.Lock.
+	rc.finalReadCloser = &finalReadCloser{
 		Reader: io.MultiReader(bytes.NewReader(penultimateBytes), s.src),
 		src:    s.src,
 	}
@@ -160,12 +155,12 @@ type ReadCloser struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	// finalReader is only set if this ReadCloser becomes the
+	// finalReadCloser is only set if this ReadCloser becomes the
 	// last-man-standing of the parent Source's spawned ReadCloser
-	// children. If finalReader is set, then finalReader will be used
+	// children. If finalReadCloser is set, then finalReadCloser will be used
 	// by Read to read out the rest of data from the parent Source's
 	// underlying Reader.
-	finalReader io.Reader
+	finalReadCloser io.Reader
 }
 
 // Read implements io.Reader.
@@ -173,7 +168,7 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	if rc.finalReader == nil {
+	if rc.finalReadCloser == nil {
 		// We're not in "last-man-standing" mode, so just continue
 		// as normal.
 		n, err = rc.s.readAt(p, int64(rc.offset))
@@ -183,7 +178,7 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 
 	// This ReadCloser is in "last-man-standing" mode, so we switch
 	// to "direct mode".
-	return rc.finalReader.Read(p)
+	return rc.finalReadCloser.Read(p)
 }
 
 // Close closes this ReadCloser. If the parent Source is not sealed,
