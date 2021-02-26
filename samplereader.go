@@ -1,3 +1,7 @@
+// Package samplereader addresses an arcane scenario: multiple readers
+// want to sample the start of an input stream (from an io.Reader),
+// which involves caching, but after the samplers are satisfied,
+// there's no need to maintain that cache and its memory overhead.
 // Package samplereader implements a reader mechanism that allows
 // multiple callers to sample some or all of the of the contents of a
 // source reader, while only reading from the source reader once.
@@ -5,7 +9,7 @@
 // This is admittedly a rather arcane need.
 // Let's say we're reading from stdin. For example:
 //
-//  # cat myfile.ext | myprogram
+//  $ cat myfile.ext | myprogram
 //
 // In this scenario, myprogram wants to detect the type of data
 // in the file/pipe, and then print it out. That sampling could be done
@@ -112,7 +116,7 @@ func (s *Source) close(rc *ReadCloser) error {
 
 	switch s.count {
 	default:
-		// There's still more than one open reader instances, so we
+		// There's still more than one active ReadCloser instance, so we
 		// don't close the underlying reader.
 		return nil
 	case 0:
@@ -130,8 +134,8 @@ func (s *Source) close(rc *ReadCloser) error {
 	// "ultimate" bytes come from s.src itself.
 	penultimateBytes := s.buf.b[rc.offset:]
 
-	// Safe to modify rc.finalReadCloser because rc calls this close()
-	// method already being inside its own mu.Lock.
+	// It is safe to modify rc.finalReadCloser because rc calls this
+	// close() method already being inside its own mu.Lock.
 	rc.finalReadCloser = &finalReadCloser{
 		Reader: io.MultiReader(bytes.NewReader(penultimateBytes), s.src),
 		src:    s.src,
@@ -179,7 +183,9 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 	}
 
 	// This ReadCloser is in "last-man-standing" mode, so we switch
-	// to "direct mode".
+	// to "direct mode". That is to say, this final ReadCloser will
+	// now read directly from the finalReadCloser instead of going
+	// through the cache.
 	return rc.finalReadCloser.Read(p)
 }
 
