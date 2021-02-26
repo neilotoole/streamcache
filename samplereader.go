@@ -69,18 +69,16 @@ func (s *Source) NewReadCloser() (*ReadCloser, error) {
 	return &ReadCloser{s: s}, nil
 }
 
-func (s *Source) readAt(p []byte, off int64) (n int, err error) {
+func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	end := int(off) + len(p)
-
+	end := int(offset) + len(p)
 	bLen := s.buf.Len()
-
 	if end < bLen {
 		// We already have the data
 		b := s.buf.Bytes()
-		copy(p, b[off:int(off)+len(p)])
+		copy(p, b[offset:int(offset)+len(p)])
 		return len(p), nil
 	}
 
@@ -92,7 +90,7 @@ func (s *Source) readAt(p []byte, off int64) (n int, err error) {
 		_, _ = s.buf.Write(tmp[0:n])
 	}
 
-	if int(off) >= s.buf.Len() {
+	if int(offset) >= s.buf.Len() {
 		return 0, err
 	}
 
@@ -100,27 +98,35 @@ func (s *Source) readAt(p []byte, off int64) (n int, err error) {
 		end = s.buf.Len()
 	}
 
-	x := s.buf.Bytes()[off:end]
+	x := s.buf.Bytes()[offset:end]
 	n = copy(p, x)
 
 	return n, err
 }
 
-func (s *Source) close() error {
+func (s *Source) close(rc *ReadCloser) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.count--
-	if s.sealed && s.count == 0 {
-		if c, ok := s.src.(io.Closer); ok {
-			return c.Close()
-		}
-
+	if !s.sealed {
 		return nil
 	}
 
-	// There's still open reader instances, so we don't
-	// close the underlying reader.
+	switch s.count {
+	default:
+		// There's still open reader instances, so we don't
+		// close the underlying reader.
+		return nil
+	case 0:
+		if c, ok := s.src.(io.Closer); ok {
+			return c.Close()
+		}
+		return nil
+	case 1:
+		// Continues below
+	}
+
 	return nil
 }
 
@@ -134,27 +140,32 @@ func (s *Source) Seal() {
 
 // ReadCloser is returned by Source.NewReadCloser.
 type ReadCloser struct {
-	s   *Source
-	off int // needs to be atomic
+	mu     sync.Mutex
+	s      *Source
+	final  io.Reader
+	offset int
 }
 
 // Read implements io.Reader.
-func (r *ReadCloser) Read(p []byte) (n int, err error) {
-	n, err = r.s.readAt(p, int64(r.off))
-	r.off += n
-
+func (rc *ReadCloser) Read(p []byte) (n int, err error) {
+	rc.mu.Lock()
+	n, err = rc.s.readAt(p, int64(rc.offset))
+	rc.offset += n
+	rc.mu.Unlock()
 	return n, err
 }
 
 // Close closes this reader. If the parent Source is not sealed, this
 // method is effectively a no-op. If the parent Source is sealed and
-// is the last remaining reader, the parent Source's underlying
-// io.Reader is closed, if it implements io.Closer.
-func (r *ReadCloser) Close() error {
-	return r.s.close()
+// the is the last remaining reader, the parent Source's underlying
+// io.Reader is closed (if it implements io.Closer),and this ReadCloser
+// switches to "direct mode" reading for the remaining data.
+func (rc *ReadCloser) Close() error {
+	return rc.s.close(rc)
 }
 
 // buffer is a basic implementation of io.Writer.
+// FIXME: are we using buffer?
 type buffer struct {
 	b []byte
 }
