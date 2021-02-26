@@ -9,7 +9,7 @@ multiple callers to sample some or all of the of the contents of a
 source reader, while only reading from the source reader once.
 
 This is admittedly a rather arcane need.
-Let's say we're reading from stdin. For example:
+Let's say we're reading from `stdin`. For example:
  
 ```shell
 $ cat myfile.ext | myprogram  
