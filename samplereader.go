@@ -65,17 +65,8 @@ func (s *Source) readAt(p []byte, off int64) (n int, err error) {
 	}
 
 	need := end - bLen
-	//s.buf.Grow(need)
-
 	tmp := make([]byte, need)
-
-	//tmp := bufb[bLen:end]
 	n, err = s.src.Read(tmp)
-	//if err != nil {
-	//	// TODO: this is a simple return for now, but if n > 0,
-	//	//  we should copy some bytes into p
-	//	return 0, err
-	//}
 
 	if n > 0 {
 		_, _ = s.buf.Write(tmp[0:n])
@@ -93,22 +84,6 @@ func (s *Source) readAt(p []byte, off int64) (n int, err error) {
 	n = copy(p, x)
 
 	return n, err
-	//
-	//
-	//read := copy(p, s.buf.Bytes()[off:])
-	//return read, nil
-	//
-	//
-	//
-	//
-	//n, err = s.src.Read(p)
-	//if err != nil {
-	//	return n, err
-	//}
-	//
-	//s.b = append(s.b, p[0:n]...)
-	//
-	//return n, err
 }
 
 func (s *Source) close() error {
@@ -125,23 +100,17 @@ func (s *Source) close() error {
 	}
 
 	// There's still open reader instances, so we don't
-	// close the underlying.
+	// close the underlying reader.
 	return nil
 }
 
-// Seal results
+// Seal results indicates that there will be no more calls
+// to NewReader.
 func (s *Source) Seal() {
 	s.mu.Lock()
 	s.sealed = true
 	s.mu.Unlock()
 }
-
-//func (s *Source) Close() error {
-//	s.mu.Lock()
-//	s.closed = true
-//	s.mu.Unlock()
-//	return nil
-//}
 
 type reader struct {
 	s   *Source
@@ -153,13 +122,13 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	r.off += n
 
 	return n, err
-
-	//return r.s.read(p)
 }
 
+// Close closes this reader. If the Source is sealed and this
+// is the last remaining reader, the underlying io.Reader is closed
+// by this method, if that reader implements io.Closer.
 func (r *reader) Close() error {
-	r.s.close()
-	return nil
+	return r.s.close()
 }
 
 // buffer is a basic implementation of io.Writer.

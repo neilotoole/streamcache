@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,32 +21,34 @@ import (
 	"github.com/neilotoole/samplereader"
 )
 
-func TestSampleReader(t *testing.T) {
-	b, err := ioutil.ReadFile("testdata/sample1.csv")
+func TestSimple(t *testing.T) {
+	f := generateSampleFile(t, 100000)
+	rc := &readCloser{Reader: f}
+	src := samplereader.NewSource(rc)
+	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
-	br := bytes.NewReader(b)
-	sr := samplereader.NewSource(br)
+	r, err := src.NewReader()
 	require.NoError(t, err)
+	src.Seal()
 
-	r, err := sr.NewReader()
-	require.NoError(t, err)
 	defer func() {
 		assert.NoError(t, r.Close())
+		assert.Equal(t, 1, rc.closed)
 	}()
 
 	gotB, err := ioutil.ReadAll(r)
 	require.NoError(t, err)
 
-	require.Equal(t, b, gotB)
+	require.Equal(t, wantB, gotB)
 }
 
 func TestSampleReaderConcurrent(t *testing.T) {
-	f := generateSampleFile(t, 10000)
-	b, err := ioutil.ReadAll(f)
+	f := generateSampleFile(t, 100000)
+	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
-	rc := &readCloser{Reader: bytes.NewReader(b)}
+	rc := &readCloser{Reader: bytes.NewReader(wantB)}
 	sr := samplereader.NewSource(rc)
 	require.NoError(t, err)
 
@@ -60,7 +64,7 @@ func TestSampleReaderConcurrent(t *testing.T) {
 			}()
 
 			// Add some jitter
-			//time.Sleep(time.Nanosecond * time.Duration(rand.Intn(1000)))
+			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(5000)))
 
 			gotB, err := ioutil.ReadAll(r)
 			if err != nil {
@@ -68,11 +72,11 @@ func TestSampleReaderConcurrent(t *testing.T) {
 				return err
 			}
 
-			if bytes.Equal(b, gotB) {
+			if bytes.Equal(wantB, gotB) {
 				t.Logf("goroutine %d: SUCCESS", i) // FIXME: remove
 				return nil
 			}
-			assert.Equal(t, b, gotB)
+			assert.Equal(t, wantB, gotB)
 			return nil
 		})
 	}
