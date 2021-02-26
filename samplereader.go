@@ -25,7 +25,7 @@
 // underlying io.Reader (os.Stdin in this scenario), and spawn multiple
 // readers, each of which can operate independently, in their own
 // goroutines if desired. The underlying source (again, os.Stdin in this
-// scenario) will only be read from, but its data is available to
+// scenario) will only once be read from, but its data is available to
 // multiple readers, because that data is cached in memory.
 //
 // That is, until there's only one final reader left, (after invoking
