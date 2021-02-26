@@ -140,19 +140,32 @@ func (s *Source) Seal() {
 
 // ReadCloser is returned by Source.NewReadCloser.
 type ReadCloser struct {
-	mu     sync.Mutex
-	s      *Source
-	final  io.Reader
-	offset int
+	mu        sync.Mutex
+	s         *Source
+	offset    int
+	closeOnce sync.Once
+	closeErr  error
+
+	// final is only set if this ReadCloser becomes the
+	// last-man-standing of the parent Source's spawned ReadCloser
+	// children. If final is set, then final will be used by Read
+	// to read out the rest of data from the parent Source's underlying
+	// Reader.
+	final io.Reader
 }
 
 // Read implements io.Reader.
 func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 	rc.mu.Lock()
-	n, err = rc.s.readAt(p, int64(rc.offset))
-	rc.offset += n
-	rc.mu.Unlock()
-	return n, err
+	defer rc.mu.Unlock()
+
+	if rc.final == nil {
+		n, err = rc.s.readAt(p, int64(rc.offset))
+		rc.offset += n
+		return n, err
+	}
+
+	return rc.final.Read(p)
 }
 
 // Close closes this reader. If the parent Source is not sealed, this
@@ -160,8 +173,13 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 // the is the last remaining reader, the parent Source's underlying
 // io.Reader is closed (if it implements io.Closer),and this ReadCloser
 // switches to "direct mode" reading for the remaining data.
+// Note that subsequent calls are no-op and return the same result.
 func (rc *ReadCloser) Close() error {
-	return rc.s.close(rc)
+	rc.closeOnce.Do(func() {
+		rc.closeErr = rc.s.close(rc)
+	})
+
+	return rc.closeErr
 }
 
 // buffer is a basic implementation of io.Writer.

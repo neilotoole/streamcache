@@ -126,7 +126,7 @@ func TestClose(t *testing.T) {
 	gotB2, err := ioutil.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, wantB, gotB2)
-	require.NoError(t, r1.Close())
+	require.NoError(t, r2.Close())
 	require.Equal(t, 1, rc.closed)
 }
 
