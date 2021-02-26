@@ -69,14 +69,17 @@ func (s *SampleReader) readAt(p []byte, off int64) (n int, err error) {
 
 	//tmp := bufb[bLen:end]
 	n, err = s.src.Read(tmp)
-	if err != nil {
-		// TODO: this is a simple return for now, but if n > 0,
-		//  we should copy some bytes into p
-		return 0, err
+	//if err != nil {
+	//	// TODO: this is a simple return for now, but if n > 0,
+	//	//  we should copy some bytes into p
+	//	return 0, err
+	//}
+
+	if n > 0 {
+		_, _ = s.buf.Write(tmp[0:n])
 	}
 
-	_, err = s.buf.Write(tmp[0:n])
-	if err != nil {
+	if int(off) >= s.buf.Len() {
 		return 0, err
 	}
 
@@ -87,7 +90,7 @@ func (s *SampleReader) readAt(p []byte, off int64) (n int, err error) {
 	x := s.buf.Bytes()[off:end]
 	n = copy(p, x)
 
-	return n, nil
+	return n, err
 	//
 	//
 	//read := copy(p, s.buf.Bytes()[off:])
@@ -155,4 +158,15 @@ func (r *reader) Read(p []byte) (n int, err error) {
 func (r *reader) Close() error {
 	r.s.close()
 	return nil
+}
+
+// buffer is a basic implementation of io.Writer.
+type buffer struct {
+	b []byte
+}
+
+// Write implements io.Writer.
+func (b *buffer) Write(p []byte) (n int, err error) {
+	b.b = append(b.b, p...)
+	return len(p), nil
 }
