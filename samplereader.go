@@ -7,7 +7,7 @@
 // multiple callers to sample some or all of the of the contents of a
 // source reader, while only reading from the source reader once.
 //
-// This is, admittedly, a rather arcane situation. But, here it is:
+// This is, admittedly, a rather arcane situation.
 //
 // Let's say we're reading from stdin. For example:
 //
@@ -166,7 +166,7 @@ type ReadCloser struct {
 
 	// finalReadCloser is only set if this ReadCloser becomes the
 	// last-man-standing of the parent Source's spawned ReadCloser
-	// children. If finalReadCloser is set, then finalReadCloser will be
+	// children. If finalReadCloser is set, then it will be
 	// used by Read to read out the rest of data from the parent
 	// Source's underlying Reader.
 	finalReadCloser io.Reader
