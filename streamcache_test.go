@@ -1,4 +1,4 @@
-package samplereader_test
+package streamcache_test
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/neilotoole/samplereader"
+	"github.com/neilotoole/streamcache"
 )
 
 const (
@@ -26,12 +26,12 @@ const (
 	gitterFactor  = 500
 )
 
-var _ io.ReadCloser = (*samplereader.ReadCloser)(nil)
+var _ io.ReadCloser = (*streamcache.ReadCloser)(nil)
 
 func TestBasic(t *testing.T) {
 	f := generateSampleFile(t, numSampleRows)
 	rcr := &readCloseRecorder{Reader: f}
-	src := samplereader.NewSource(rcr)
+	src := streamcache.NewSource(rcr)
 	wantB, err := ioutil.ReadAll(f)
 	require.NoError(t, err)
 
@@ -57,7 +57,7 @@ func TestConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	rcr := &readCloseRecorder{Reader: bytes.NewReader(wantB)}
-	src := samplereader.NewSource(rcr)
+	src := streamcache.NewSource(rcr)
 	require.NoError(t, err)
 
 	g := &errgroup.Group{}
@@ -92,7 +92,7 @@ func TestConcurrent(t *testing.T) {
 }
 
 func TestSeal(t *testing.T) {
-	src := samplereader.NewSource(strings.NewReader("anything"))
+	src := streamcache.NewSource(strings.NewReader("anything"))
 	r, err := src.NewReadCloser()
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -101,7 +101,7 @@ func TestSeal(t *testing.T) {
 
 	r, err = src.NewReadCloser()
 	require.Error(t, err)
-	require.Equal(t, samplereader.ErrSealed, err)
+	require.Equal(t, streamcache.ErrSealed, err)
 	require.Nil(t, r)
 }
 
@@ -111,7 +111,7 @@ func TestClose(t *testing.T) {
 	require.NoError(t, err)
 
 	rcr := &readCloseRecorder{Reader: f}
-	src := samplereader.NewSource(rcr)
+	src := streamcache.NewSource(rcr)
 
 	r1, err := src.NewReadCloser()
 	require.NoError(t, err)

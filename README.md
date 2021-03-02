@@ -1,11 +1,11 @@
-# samplereader: arcane cached reader
+# streamcache: arcane cached reader
 
-Package `samplereader` addresses an arcane scenario: multiple readers
+Package `streamcache` addresses an arcane scenario: multiple readers
 want to sample the start of an input stream (from an `io.Reader`),
 which involves caching, but after the samplers are satisfied,
 there's no need to maintain that cache and its memory overhead.
 
-Package `samplereader` implements a reader mechanism that allows
+Package `streamcache` implements a reader mechanism that allows
 multiple callers to sample some or all of the of the contents of a
 source reader, while only reading from the source reader once.
 
@@ -27,7 +27,7 @@ input, and check if the input is either valid CSV, or valid TSV.
 After that process, let's say we want to dump out the entire contents
 of the input.
 
-Package `samplereader` provides a facility to create a `Source` from an
+Package `streamcache` provides a facility to create a `Source` from an
 underlying `io.Reader` (`os.Stdin` in this scenario), and spawn multiple
 readers, each of which can operate independently, in their own
 goroutines if desired. The underlying source (again, `os.Stdin` in this
