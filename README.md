@@ -1,4 +1,4 @@
-# streamcache: arcane cached reader
+# streamcache: specialized cached reader
 
 Package `streamcache` addresses an arcane scenario: multiple readers
 want to sample the start of an input stream (from an `io.Reader`),
