@@ -1,7 +1,8 @@
 // Package streamcache addresses an arcane scenario: multiple readers
 // want to sample the start of an input stream (from an io.Reader),
 // which involves caching, but after the samplers are satisfied,
-// there's no need to maintain that cache and its memory overhead.
+// there's no need to maintain that cache and its memory overhead
+// for the remainder of the read.
 //
 // Package streamcache implements a reader mechanism that allows
 // multiple callers to sample some or all of the of the contents of a
