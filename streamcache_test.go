@@ -23,7 +23,7 @@ import (
 const (
 	numSampleRows = 1000000
 	numG          = 10000
-	gitterFactor  = 500
+	jitterFactor  = 500
 )
 
 var _ io.ReadCloser = (*streamcache.ReadCloser)(nil)
@@ -32,7 +32,7 @@ func TestBasic(t *testing.T) {
 	f := generateSampleFile(t, numSampleRows)
 	rcr := &readCloseRecorder{Reader: f}
 	src := streamcache.NewSource(rcr)
-	wantB, err := ioutil.ReadAll(f)
+	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
 
 	r, err := src.NewReadCloser()
@@ -45,7 +45,7 @@ func TestBasic(t *testing.T) {
 		assert.Equal(t, 1, rcr.closed)
 	}()
 
-	gotB, err := ioutil.ReadAll(r)
+	gotB, err := io.ReadAll(r)
 	require.NoError(t, err)
 
 	require.Equal(t, wantB, gotB)
@@ -53,7 +53,7 @@ func TestBasic(t *testing.T) {
 
 func TestConcurrent(t *testing.T) {
 	f := generateSampleFile(t, numSampleRows)
-	wantB, err := ioutil.ReadAll(f)
+	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
 
 	rcr := &readCloseRecorder{Reader: bytes.NewReader(wantB)}
@@ -71,9 +71,9 @@ func TestConcurrent(t *testing.T) {
 			}()
 
 			// Add some jitter
-			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(gitterFactor)))
+			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(jitterFactor)))
 
-			gotB, err := ioutil.ReadAll(r)
+			gotB, err := io.ReadAll(r)
 			if err != nil {
 				assert.NoError(t, r.Close())
 				return err
@@ -107,7 +107,7 @@ func TestSeal(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	f := generateSampleFile(t, numSampleRows)
-	wantB, err := ioutil.ReadAll(f)
+	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
 
 	rcr := &readCloseRecorder{Reader: f}
@@ -137,7 +137,7 @@ func TestClose(t *testing.T) {
 // specified number of rows. It is the caller's responsibility to
 // close the file. Note that the file is removed by t.Cleanup.
 func generateSampleFile(t *testing.T, rows int) *os.File {
-	f, err := ioutil.TempFile("", "")
+	f, err := os.CreateTemp("", "")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, os.RemoveAll(f.Name()))

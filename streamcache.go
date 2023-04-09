@@ -5,14 +5,14 @@
 // for the remainder of the read.
 //
 // Package streamcache implements a reader mechanism that allows
-// multiple callers to sample some or all of the of the contents of a
+// multiple callers to sample some or all of the contents of a
 // source reader, while only reading from the source reader once.
 //
 // This is, admittedly, a rather arcane situation.
 //
 // Let's say we're reading from stdin. For example:
 //
-//  $ cat myfile.ext | myprogram
+//	$ cat myfile.ext | myprogram
 //
 // In this scenario, myprogram wants to detect the type of data
 // in the file/pipe, and then print it out. That sampling could be done
