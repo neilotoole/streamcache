@@ -282,12 +282,13 @@ type joinReader struct {
 
 // Read implements io.Reader.
 func (jr *joinReader) Read(p []byte) (n int, err error) {
-	if len(jr.unreadCache) == 0 {
+	cacheLen := len(jr.unreadCache)
+	if cacheLen == 0 {
 		// The cache is empty, so we read from the origin.
 		return jr.origin.Read(p)
 	}
 
-	if len(p) <= len(jr.unreadCache) {
+	if len(p) <= cacheLen {
 		// The read can be satisfied entirely from the cache.
 		n = copy(p, jr.unreadCache)
 		jr.unreadCache = jr.unreadCache[n:]
@@ -297,8 +298,8 @@ func (jr *joinReader) Read(p []byte) (n int, err error) {
 	// The read will be partially from the cache, with the remainder
 	// coming from the origin.
 	copy(p, jr.unreadCache)
-	n, err = jr.origin.Read(p[len(jr.unreadCache):])
-	n += len(jr.unreadCache)
-	jr.unreadCache = jr.unreadCache[:0]
+	n, err = jr.origin.Read(p[cacheLen:])
+	n += cacheLen
+	jr.unreadCache = nil
 	return n, err
 }
