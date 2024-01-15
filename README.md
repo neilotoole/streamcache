@@ -6,7 +6,7 @@ which involves caching, but after the samplers are satisfied,
 there's no need to maintain that cache and its memory overhead.
 
 Package `streamcache` implements a reader mechanism that allows
-multiple callers to sample some or all of the of the contents of a
+multiple callers to sample some or all of the contents of a
 source reader, while only reading from the source reader once.
 
 This is, admittedly, a rather arcane situation. But, here it is:
