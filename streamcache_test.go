@@ -30,10 +30,13 @@ const (
 var _ io.ReadCloser = (*streamcache.Reader)(nil)
 
 func TestBasic(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
 	f := generateSampleFile(t, numSampleRows)
+	doTest(t, f)
+}
+
+func doTest(t *testing.T, f *os.File) {
+	ctx := context.Background()
+
 	rcr := &readCloseRecorder{Reader: f}
 	src := streamcache.NewSource(rcr)
 	wantB, err := io.ReadAll(f)

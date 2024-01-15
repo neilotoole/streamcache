@@ -37,7 +37,6 @@
 package streamcache
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -54,8 +53,8 @@ type Source struct {
 	// mu protects concurrent access to Source's fields.
 	mu sync.Mutex
 
-	// src is the underlying reader.
-	src io.Reader
+	// origin is the underlying reader.
+	origin io.Reader
 
 	// sealed is set to true when Seal is called. When sealed is true,
 	// no more calls to NewReader are allowed.
@@ -68,16 +67,16 @@ type Source struct {
 	// rdrCount is the number of active Reader instances.
 	rdrCount int
 
-	// cache holds the accumulated bytes read from src.
+	// cache holds the accumulated bytes read from origin.
 	cache []byte
 
-	// buf is used as a temporary buffer for reading from src.
+	// buf is used as a temporary buffer for reading from origin.
 	buf []byte
 }
 
 // NewSource returns a new source with r as the underlying reader.
 func NewSource(r io.Reader) *Source {
-	return &Source{src: r, cache: make([]byte, 0)}
+	return &Source{origin: r, cache: make([]byte, 0)}
 }
 
 // NewReader returns a new Reader for Source. If Source is already
@@ -96,15 +95,16 @@ func (s *Source) NewReader(ctx context.Context) (*Reader, error) {
 	return &Reader{ctx: ctx, s: s}, nil
 }
 
-func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
+func (s *Source) readAt(p []byte, offset int) (n int, err error) {
+	end := offset + len(p)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	end := int(offset) + len(p)
 	cacheLen := len(s.cache)
 	if end < cacheLen {
 		// We already have the data in the buf cache
-		return copy(p, s.cache[offset:int(offset)+len(p)]), nil
+		return copy(p, s.cache[offset:offset+len(p)]), nil
 	}
 
 	if s.err != nil {
@@ -112,16 +112,15 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	}
 
 	need := end - cacheLen
-
 	s.ensureBufSize(need)
-	n, s.err = s.src.Read(s.buf)
+	n, s.err = s.origin.Read(s.buf)
 
 	if n > 0 {
 		s.cache = append(s.cache, s.buf[:n]...)
 	}
 
 	cacheLen = len(s.cache)
-	if int(offset) >= cacheLen {
+	if offset >= cacheLen {
 		return 0, s.err
 	}
 
@@ -133,6 +132,12 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 }
 
 func (s *Source) ensureBufSize(n int) {
+	// https://www.calhoun.io/how-to-use-slice-capacity-and-length-in-go/
+	// https://github.com/golang/go/issues/51462
+	// https://stackoverflow.com/questions/48618201/how-to-release-memory-allocated-by-a-slice
+	// https://medium.com/@cerebrovinny/mastering-golang-memory-management-tips-and-tricks-99868f1f4971
+	// https://github.com/golang/go/issues/51462
+
 	switch {
 	case s.buf == nil:
 		s.buf = make([]byte, n)
@@ -146,9 +151,6 @@ func (s *Source) ensureBufSize(n int) {
 	}
 
 	// We need to grow the buffer.
-	// Reset first to avoid a memory leak?
-	// Not sure if this is the right thing to do.
-	s.buf = s.buf[:0]
 	s.buf = make([]byte, n)
 }
 
@@ -171,7 +173,9 @@ func (s *Source) close(r *Reader) error {
 		// don't close the underlying reader.
 		return nil
 	case 0:
-		if c, ok := s.src.(io.Closer); ok {
+		// r was the last reader standing, so we close the underlying
+		// reader if it implements io.Closer.
+		if c, ok := s.origin.(io.Closer); ok {
 			return c.Close()
 		}
 		return nil
@@ -179,19 +183,25 @@ func (s *Source) close(r *Reader) error {
 		// Continues below
 	}
 
-	// Now there's only one final reader left, so we switch
-	// to "direct mode" for that final reader.
-	// The bytes from cache are the "penultimate" bytes, because the
-	// "ultimate" bytes come from s.src itself.
-	penultimateBytes := s.cache[r.offset:]
-
-	// It is safe to modify rc.finalReadCloser because rc calls this
-	// close() method already being inside its own mu.Lock.
-	r.finalReadCloser = &finalReadCloser{
-		Reader: io.MultiReader(bytes.NewReader(penultimateBytes), s.src),
-		src:    s.src,
+	s.buf = nil
+	if len(s.cache)-r.offset == 0 {
+		// r has read already read everything in the cache, so
+		// it can switch to reading directly from the origin
+		// for the remaining bytes.
+		r.finalReader = s.origin
+		s.cache = nil
+		return nil
 	}
 
+	// There's still some bytes in the cache that r hasn't read.
+	// We construct a joinReader that is the concatenation of the
+	// remaining cache bytes plus the origin reader. Effectively
+	// it's a lightweight io.MultiReader.
+	r.finalReader = &joinReader{
+		unreadCache: s.cache[r.offset:],
+		origin:      s.origin,
+	}
+	s.cache = nil
 	return nil
 }
 
@@ -206,26 +216,22 @@ func (s *Source) Seal() {
 // Reader is returned by Source.NewReader. It is the
 // responsibility of the receiver to close the returned Reader.
 type Reader struct {
-	mu        sync.Mutex
 	s         *Source
 	ctx       context.Context
 	offset    int
 	closeOnce sync.Once
 	closeErr  error
 
-	// finalReadCloser is only set if this Reader becomes the
+	// finalReader is only set if this Reader becomes the
 	// last-man-standing of the parent Source's spawned Reader
-	// children. If finalReadCloser is set, then it will be
+	// children. If finalReader is set, then it will be
 	// used by Read to read out the rest of data from the parent
 	// Source's underlying Reader.
-	finalReadCloser io.Reader
+	finalReader io.Reader
 }
 
 // Read implements io.Reader.
 func (r *Reader) Read(p []byte) (n int, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if r.ctx != nil {
 		select {
 		case <-r.ctx.Done():
@@ -234,26 +240,25 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 		}
 	}
 
-	if r.finalReadCloser == nil {
-		// We're not in "last-man-standing" mode, so just continue
-		// as normal.
-		n, err = r.s.readAt(p, int64(r.offset))
-		r.offset += n
-		return n, err
+	if r.finalReader != nil {
+		// This Reader is in "last-man-standing" mode, so we switch
+		// to "direct mode". That is to say, this final Reader will
+		// now read directly from finalReader instead of going
+		// through the cache.
+		return r.finalReader.Read(p)
 	}
 
-	// This Reader is in "last-man-standing" mode, so we switch
-	// to "direct mode". That is to say, this final Reader will
-	// now read directly from the finalReadCloser instead of going
-	// through the cache.
-	return r.finalReadCloser.Read(p)
+	// We're not in "last-man-standing" mode, so just continue
+	// as normal.
+	n, err = r.s.readAt(p, r.offset)
+	r.offset += n
+	return n, err
 }
 
 // Close closes this Reader. If the parent Source is not sealed,
 // this method is effectively a no-op. If the parent Source is sealed
 // and this is the last remaining reader, the parent Source's underlying
-// io.Reader is closed (if it implements io.Closer), and this Reader
-// switches to "direct mode" reading for the remaining data.
+// io.Reader is closed (if it implements io.Closer).
 //
 // Note that subsequent calls to this method are no-op and return the
 // same result as the first call.
@@ -265,18 +270,35 @@ func (r *Reader) Close() error {
 	return r.closeErr
 }
 
-// finalReadCloser is used by the final child of Source.NewReader
-// to wrap up the reading/closing without the use of the cache.
-type finalReadCloser struct {
-	io.Reader
-	src io.Reader
+var _ io.Reader = (*joinReader)(nil)
+
+// joinReader is an io.Reader whose Read method reads from the
+// concatenation of the unreadCache, and the origin reader. Effectively,
+// joinReader is a lightweight io.MultiReader.
+type joinReader struct {
+	unreadCache []byte
+	origin      io.Reader
 }
 
-// Close implements io.Closer.
-func (fc *finalReadCloser) Close() error {
-	if c, ok := fc.src.(io.Closer); ok {
-		return c.Close()
+// Read implements io.Reader.
+func (jr *joinReader) Read(p []byte) (n int, err error) {
+	if len(jr.unreadCache) == 0 {
+		// The cache is empty, so we read from the origin.
+		return jr.origin.Read(p)
 	}
 
-	return nil
+	if len(p) <= len(jr.unreadCache) {
+		// The read can be satisfied entirely from the cache.
+		n = copy(p, jr.unreadCache)
+		jr.unreadCache = jr.unreadCache[n:]
+		return n, nil
+	}
+
+	// The read will be partially from the cache, with the remainder
+	// coming from the origin.
+	copy(p, jr.unreadCache)
+	n, err = jr.origin.Read(p[len(jr.unreadCache):])
+	n += len(jr.unreadCache)
+	jr.unreadCache = jr.unreadCache[:0]
+	return n, err
 }
