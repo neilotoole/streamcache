@@ -51,22 +51,40 @@ var ErrSealed = errors.New("already sealed")
 // Source encapsulates an underlying io.Reader that many callers
 // can read from.
 type Source struct {
-	src      io.Reader
-	err      error
-	mu       sync.Mutex
-	sealed   bool
+	// mu protects concurrent access to Source's fields.
+	mu sync.Mutex
+
+	// src is the underlying reader.
+	src io.Reader
+
+	// sealed is set to true when Seal is called. When sealed is true,
+	// no more calls to NewReader are allowed.
+	sealed bool
+
+	// err is the first (and only) error returned by the underlying reader.
+	// Once err has been set, the underlying reader is never read from again.
+	err error
+
+	// rdrCount is the number of active Reader instances.
 	rdrCount int
-	buf      []byte
+
+	// cache holds the accumulated bytes read from src.
+	cache []byte
+
+	// buf is used as a temporary buffer for reading from src.
+	buf []byte
 }
 
 // NewSource returns a new source with r as the underlying reader.
 func NewSource(r io.Reader) *Source {
-	return &Source{src: r, buf: make([]byte, 0, 512)}
+	return &Source{src: r, cache: make([]byte, 0)}
 }
 
-// NewReader returns a new ReadCloser for Source. It is the caller's
-// responsibility to close the returned ReadCloser.
-func (s *Source) NewReader(ctx context.Context) (*ReadCloser, error) {
+// NewReader returns a new Reader for Source. If Source is already
+// sealed, ErrSealed is returned. If ctx is non-nil, it is used by the
+// returned Reader to check for cancellation before each read.
+// It is the caller's responsibility to close the returned Reader.
+func (s *Source) NewReader(ctx context.Context) (*Reader, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -75,7 +93,7 @@ func (s *Source) NewReader(ctx context.Context) (*ReadCloser, error) {
 	}
 
 	s.rdrCount++
-	return &ReadCloser{ctx: ctx, s: s}, nil
+	return &Reader{ctx: ctx, s: s}, nil
 }
 
 func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
@@ -83,38 +101,62 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 	defer s.mu.Unlock()
 
 	end := int(offset) + len(p)
-	bufLen := len(s.buf)
-	if end < bufLen {
+	cacheLen := len(s.cache)
+	if end < cacheLen {
 		// We already have the data in the buf cache
-		return copy(p, s.buf[offset:int(offset)+len(p)]), nil
+		return copy(p, s.cache[offset:int(offset)+len(p)]), nil
 	}
 
 	if s.err != nil {
-		return copy(p, s.buf[offset:]), s.err
+		return copy(p, s.cache[offset:]), s.err
 	}
 
-	need := end - bufLen
-	// TODO: We should be able to cache tmp and re-use it?
-	tmp := make([]byte, need)
-	n, s.err = s.src.Read(tmp)
+	need := end - cacheLen
+
+	s.ensureBufSize(need)
+	n, s.err = s.src.Read(s.buf)
 
 	if n > 0 {
-		s.buf = append(s.buf, tmp[:n]...)
+		s.cache = append(s.cache, s.buf[:n]...)
 	}
 
-	bufLen = len(s.buf)
-	if int(offset) >= bufLen {
+	cacheLen = len(s.cache)
+	if int(offset) >= cacheLen {
 		return 0, s.err
 	}
 
-	if end > bufLen {
-		end = bufLen
+	if end > cacheLen {
+		end = cacheLen
 	}
 
-	return copy(p, s.buf[offset:end]), s.err
+	return copy(p, s.cache[offset:end]), s.err
 }
 
-func (s *Source) close(rc *ReadCloser) error {
+func (s *Source) ensureBufSize(n int) {
+	switch {
+	case s.buf == nil:
+		s.buf = make([]byte, n)
+		return
+	case len(s.buf) == n:
+		return
+	case n <= cap(s.buf):
+		s.buf = s.buf[:n]
+		return
+	default:
+	}
+
+	// We need to grow the buffer.
+	// Reset first to avoid a memory leak?
+	// Not sure if this is the right thing to do.
+	s.buf = s.buf[:0]
+	s.buf = make([]byte, n)
+}
+
+// close is invoked by Reader.Close to close the Reader. If the Source
+// is sealed, this method will close the underlying reader if it
+// implements io.Closer, and switch to "direct mode" for the final Reader
+// to complete its work.
+func (s *Source) close(r *Reader) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -125,7 +167,7 @@ func (s *Source) close(rc *ReadCloser) error {
 
 	switch s.rdrCount {
 	default:
-		// There's still more than one active ReadCloser instance, so we
+		// There's still multiple active Reader instances, so we
 		// don't close the underlying reader.
 		return nil
 	case 0:
@@ -139,13 +181,13 @@ func (s *Source) close(rc *ReadCloser) error {
 
 	// Now there's only one final reader left, so we switch
 	// to "direct mode" for that final reader.
-	// The bytes from buf are the "penultimate" bytes, because the
+	// The bytes from cache are the "penultimate" bytes, because the
 	// "ultimate" bytes come from s.src itself.
-	penultimateBytes := s.buf[rc.offset:]
+	penultimateBytes := s.cache[r.offset:]
 
 	// It is safe to modify rc.finalReadCloser because rc calls this
 	// close() method already being inside its own mu.Lock.
-	rc.finalReadCloser = &finalReadCloser{
+	r.finalReadCloser = &finalReadCloser{
 		Reader: io.MultiReader(bytes.NewReader(penultimateBytes), s.src),
 		src:    s.src,
 	}
@@ -161,9 +203,9 @@ func (s *Source) Seal() {
 	s.mu.Unlock()
 }
 
-// ReadCloser is returned by Source.NewReader. It is the
-// responsibility of the receiver to close the returned ReadCloser.
-type ReadCloser struct {
+// Reader is returned by Source.NewReader. It is the
+// responsibility of the receiver to close the returned Reader.
+type Reader struct {
 	mu        sync.Mutex
 	s         *Source
 	ctx       context.Context
@@ -171,8 +213,8 @@ type ReadCloser struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	// finalReadCloser is only set if this ReadCloser becomes the
-	// last-man-standing of the parent Source's spawned ReadCloser
+	// finalReadCloser is only set if this Reader becomes the
+	// last-man-standing of the parent Source's spawned Reader
 	// children. If finalReadCloser is set, then it will be
 	// used by Read to read out the rest of data from the parent
 	// Source's underlying Reader.
@@ -180,7 +222,7 @@ type ReadCloser struct {
 }
 
 // Read implements io.Reader.
-func (r *ReadCloser) Read(p []byte) (n int, err error) {
+func (r *Reader) Read(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -200,22 +242,22 @@ func (r *ReadCloser) Read(p []byte) (n int, err error) {
 		return n, err
 	}
 
-	// This ReadCloser is in "last-man-standing" mode, so we switch
-	// to "direct mode". That is to say, this final ReadCloser will
+	// This Reader is in "last-man-standing" mode, so we switch
+	// to "direct mode". That is to say, this final Reader will
 	// now read directly from the finalReadCloser instead of going
 	// through the cache.
 	return r.finalReadCloser.Read(p)
 }
 
-// Close closes this ReadCloser. If the parent Source is not sealed,
+// Close closes this Reader. If the parent Source is not sealed,
 // this method is effectively a no-op. If the parent Source is sealed
 // and this is the last remaining reader, the parent Source's underlying
-// io.Reader is closed (if it implements io.Closer), and this ReadCloser
+// io.Reader is closed (if it implements io.Closer), and this Reader
 // switches to "direct mode" reading for the remaining data.
 //
 // Note that subsequent calls to this method are no-op and return the
 // same result as the first call.
-func (r *ReadCloser) Close() error {
+func (r *Reader) Close() error {
 	r.closeOnce.Do(func() {
 		r.closeErr = r.s.close(r)
 	})

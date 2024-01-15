@@ -27,7 +27,7 @@ const (
 	jitterFactor  = 500
 )
 
-var _ io.ReadCloser = (*streamcache.ReadCloser)(nil)
+var _ io.ReadCloser = (*streamcache.Reader)(nil)
 
 func TestBasic(t *testing.T) {
 	t.Parallel()
@@ -69,7 +69,7 @@ func TestConcurrent(t *testing.T) {
 
 	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < numG; i++ {
-		var r *streamcache.ReadCloser
+		var r *streamcache.Reader
 		r, err = src.NewReader(gCtx)
 		require.NoError(t, err)
 
@@ -94,6 +94,9 @@ func TestConcurrent(t *testing.T) {
 	}
 
 	src.Seal()
+
+	buf := bytes.Buffer{}
+	buf.Grow(2)
 
 	err = g.Wait()
 	assert.NoError(t, err)
