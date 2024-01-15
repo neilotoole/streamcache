@@ -1,7 +1,6 @@
-package streamcache_test
+package streamcache
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,47 +15,165 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/neilotoole/streamcache"
 )
 
 const (
 	//numSampleRows = 1000000
-	numSampleRows = 4000
+	numSampleRows = 40000
 	numG          = 500
 	jitterFactor  = 30
+	anything      = "anything"
 )
 
-var _ io.ReadCloser = (*streamcache.Reader)(nil)
+var _ io.ReadCloser = (*Reader)(nil)
 
-func TestRead_SingleReaderImmediateSeal(t *testing.T) {
-	//t.Parallel()
-	want := []byte("anything")
-	src := streamcache.NewSource(bytes.NewReader(want))
+func isDone(src *Source) bool {
+	select {
+	case <-src.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+func TestRead_MixedCache(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	src := NewSource(strings.NewReader(anything))
+
+	require.False(t, isDone(src))
+	select {
+	case <-src.Done():
+		t.Fatal("src.Done() should not be closed")
+	default:
+	}
+	require.Equal(t, 0, src.Size())
+	require.Nil(t, src.Err())
+
+	r, err := src.NewReader(ctx)
+	require.NoError(t, err)
+
+	// We'll read half the bytes.
+	buf := make([]byte, 4)
+	gotN, gotErr := r.Read(buf)
+	require.NoError(t, gotErr)
+	require.Equal(t, 4, gotN)
+	require.Equal(t, "anyt", string(buf))
+	require.Equal(t, 4, r.offset)
+	require.Equal(t, 4, src.size)
+	require.Equal(t, 4, len(src.buf))
+	require.Equal(t, 4, len(src.cache))
+
+	// Seal the source; after this, no more readers can be created.
+	src.Seal()
+	require.True(t, src.Sealed())
+	require.False(t, isDone(src))
+	select {
+	case <-src.Done():
+		t.Fatal("src.Done() should not be closed")
+	default:
+	}
+
+	// We shouldn't be able to create another reader, because
+	// the source is sealed.
+	r2, err := src.NewReader(ctx)
+	require.Error(t, err)
+	require.Equal(t, ErrSealed, err)
+	require.Nil(t, r2)
+	require.Nil(t, src.Err())
+
+	// Read the remaining bytes.
+	gotN, gotErr = r.Read(buf)
+	require.NoError(t, gotErr)
+	require.Nil(t, src.Err())
+	require.Equal(t, 4, gotN)
+	require.Equal(t, "hing", string(buf))
+	require.Equal(t, 8, r.offset)
+	require.Equal(t, 8, src.size)
+
+	// Read again, but this time we should get io.EOF.
+	gotN, gotErr = r.Read(buf)
+	require.Error(t, gotErr)
+	require.Equal(t, 0, gotN)
+	require.Equal(t, io.EOF, gotErr)
+	require.Equal(t, io.EOF, src.Err())
+	require.Equal(t, 8, r.offset)
+	require.Equal(t, 8, src.Size())
+	require.False(t, isDone(src))
+
+	// Read one more time, and we should get io.EOF again.
+	gotN, gotErr = r.Read(buf)
+	require.Error(t, gotErr)
+	require.Equal(t, 0, gotN)
+	require.Equal(t, io.EOF, gotErr)
+	require.Equal(t, io.EOF, src.Err())
+	require.Equal(t, 8, r.offset)
+	require.Equal(t, 8, src.Size())
+	require.False(t, isDone(src))
+
+	// Close the reader, which should close the underlying source.
+	gotErr = r.Close()
+	require.NoError(t, gotErr)
+	require.True(t, isDone(src))
+
+	select {
+	case <-src.Done():
+		// Expected
+	default:
+		t.Fatal("src.Done() should be closed")
+	}
+
+	// Closing again should be no-op.
+	gotErr = r.Close()
+	require.Nil(t, gotErr)
+	require.True(t, isDone(src))
+}
+
+func TestReaderAlreadyClosed(t *testing.T) {
+	src := NewSource(strings.NewReader(anything))
 	r, err := src.NewReader(context.Background())
 	require.NoError(t, err)
+	buf := make([]byte, 4)
+	_, err = r.Read(buf)
+	require.NoError(t, err)
+
+	// After closing, we should get ErrAlreadyClosed if we try to read again.
+	require.NoError(t, r.Close())
+	_, err = r.Read(buf)
+	require.Error(t, err)
+	require.Equal(t, ErrAlreadyClosed, err)
+}
+
+func TestRead_SingleReaderImmediateSeal(t *testing.T) {
+	src := NewSource(strings.NewReader(anything))
+	r, err := src.NewReader(context.Background())
+	require.NoError(t, err)
+
 	src.Seal()
 
-	gotBytes, err := io.ReadAll(r)
+	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
-	require.Equal(t, string(want), string(gotBytes))
+	require.Equal(t, anything, string(gotData))
 	require.NoError(t, r.Close())
+	require.True(t, isDone(src))
 }
 
 func TestRead_NoSeal(t *testing.T) {
 	//t.Parallel()
-	want := []byte("anything")
-	src := streamcache.NewSource(bytes.NewReader(want))
+	src := NewSource(strings.NewReader(anything))
 	r, err := src.NewReader(context.Background())
 	require.NoError(t, err)
 
-	gotBytes, err := io.ReadAll(r)
+	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
-	require.Equal(t, string(want), string(gotBytes))
+	require.Equal(t, anything, string(gotData))
 	require.NoError(t, r.Close())
+	require.False(t, isDone(src), "not closed because not sealed")
+	require.Equal(t, io.EOF, src.Err())
 }
 
-func TestBasic(t *testing.T) {
+func TestRead_File(t *testing.T) {
 	ctx := context.Background()
 	_, fp := generateSampleFile(t, numSampleRows)
 
@@ -64,108 +181,86 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Sample file size: %d", fi.Size())
 
-	wantB, err := os.ReadFile(fp)
+	wantData, err := os.ReadFile(fp)
 	require.NoError(t, err)
 
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 	rcr := &rcRecorder{r: f}
-	src := streamcache.NewSource(rcr)
+	src := NewSource(rcr)
 
 	r, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
 	src.Seal()
 
-	defer func() {
-		assert.NoError(t, r.Close())
-		assert.Equal(t, 1, rcr.closeCount)
-		require.Equal(t, fi.Size(), int64(src.Size()))
-	}()
-
-	gotB, err := io.ReadAll(r)
+	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
 
-	require.Equal(t, string(wantB), string(gotB))
-}
+	require.Equal(t, string(wantData), string(gotData))
 
-func TestConcurrent(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	_, fp := generateSampleFile(t, numSampleRows)
-	wantB, err := os.ReadFile(fp)
-	require.NoError(t, err)
-	fi, err := os.Stat(fp)
-	require.NoError(t, err)
-	t.Logf("Sample file size: %d", fi.Size())
-
-	f, err := os.Open(fp)
-	require.NoError(t, err)
-
-	//rcr := &rcRecorder{Reader: bytes.NewReader(wantB)}
-	src := streamcache.NewSource(f)
-	require.NoError(t, err)
-
-	wg := &sync.WaitGroup{}
-	wg.Add(numG)
-
-	go func() {}()
-
-	//var rdrs []*streamcache.Reader
-
-	//g, gCtx := errgroup.WithContext(ctx)
-	for i := 0; i < numG; i++ {
-		i := i
-		r, err := src.NewReader(ctx)
-		require.NoError(t, err)
-
-		go func() {
-			defer wg.Done()
-
-			defer func() {
-				println(fmt.Sprintf("r.Close for %d", i))
-				assert.NoError(t, r.Close())
-			}()
-
-			// Add some jitter
-			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(jitterFactor)))
-
-			_ = i
-			x := i
-			_ = x
-
-			//if i > 10 {
-			//	println("sealing her for real")
-			//	src.Seal()
-			//}
-
-			println(fmt.Sprintf("goroutine %d: about to read all", i))
-			gotB, err := io.ReadAll(r)
-			assert.NoError(t, err)
-			//if err != nil {
-			//	return err
-			//}
-
-			//require.NoError(t, r.Close())
-
-			assert.Equal(t, string(wantB), string(gotB))
-		}()
-
-	}
-
-	wg.Wait()
-	src.Seal()
-	assert.NoError(t, err)
-	//assert.Equal(t, 1, rcr.closed)
-
+	assert.NoError(t, r.Close())
+	assert.Equal(t, 1, rcr.closeCount)
 	require.Equal(t, fi.Size(), int64(src.Size()))
 }
 
-func sleepJitter() {
-	d := time.Millisecond * time.Duration(rand.Intn(jitterFactor))
-	//fmt.Printf("sleeping for %s\n", d)
-	time.Sleep(d)
+func TestPointer(t *testing.T) {
+	// FIXME: delete this test
+	var pCloseErr *error
+	require.Nil(t, pCloseErr)
+
+	var closeErr error
+	require.Nil(t, closeErr)
+
+	pCloseErr = &closeErr
+	require.NotNil(t, pCloseErr)
+
+	gotCloseErr := *pCloseErr
+	require.Nil(t, gotCloseErr)
+
+	actualErr := errors.New("oh noes")
+	pCloseErr = &actualErr
+	require.NotNil(t, pCloseErr)
+	require.NotNil(t, *pCloseErr)
+}
+
+func TestRead_File_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	wantSize, fp := generateSampleFile(t, numSampleRows)
+	wantData, err := os.ReadFile(fp)
+	f, err := os.Open(fp)
+	require.NoError(t, err)
+
+	src := NewSource(f)
+	for i := 0; i < numG; i++ {
+		r, err := src.NewReader(ctx)
+		require.NoError(t, err)
+
+		go func(i int, r *Reader) {
+			defer func() { assert.NoError(t, r.Close()) }()
+
+			sleepJitter()
+
+			gotData, err := io.ReadAll(r)
+			assert.NoError(t, err)
+			assert.Equal(t, string(wantData), string(gotData))
+		}(i, r)
+
+	}
+
+	select {
+	case <-src.Done():
+		t.Fatal("Shouldn't be done because not sealed")
+	default:
+	}
+
+	src.Seal()
+
+	<-src.Done()
+
+	require.Equal(t, wantSize, src.Size())
 }
 
 func TestConcurrent2(t *testing.T) {
@@ -180,12 +275,12 @@ func TestConcurrent2(t *testing.T) {
 	require.NoError(t, err)
 
 	recRdr := &rcRecorder{r: f}
-	src := streamcache.NewSource(recRdr)
+	src := NewSource(recRdr)
 	require.NoError(t, err)
 
 	t.Logf("Iterations: %d", numG)
 
-	rdrs := make([]*streamcache.Reader, numG)
+	rdrs := make([]*Reader, numG)
 	for i := 0; i < numG; i++ {
 		rdrs[i], err = src.NewReader(ctx)
 		require.NoError(t, err)
@@ -196,7 +291,7 @@ func TestConcurrent2(t *testing.T) {
 	sealOnce := &sync.Once{}
 
 	for i := range rdrs {
-		go func(i int, r *streamcache.Reader) {
+		go func(i int, r *Reader) {
 			defer func() {
 				//println(fmt.Sprintf("r.Close for %d", i))
 				assert.NoError(t, r.Close())
@@ -231,7 +326,7 @@ func TestSeal(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	src := streamcache.NewSource(strings.NewReader("anything"))
+	src := NewSource(strings.NewReader("anything"))
 	r, err := src.NewReader(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -240,7 +335,7 @@ func TestSeal(t *testing.T) {
 
 	r, err = src.NewReader(ctx)
 	require.Error(t, err)
-	require.Equal(t, streamcache.ErrSealed, err)
+	require.Equal(t, ErrSealed, err)
 	require.Nil(t, r)
 }
 
@@ -250,22 +345,22 @@ func TestSeal2(t *testing.T) {
 	want := strings.Repeat("anything", 100)
 
 	ctx := context.Background()
-	src := streamcache.NewSource(strings.NewReader(want))
+	src := NewSource(strings.NewReader(want))
 	r1, err := src.NewReader(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, r1)
-	gotBytes1, err := io.ReadAll(r1)
+	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
-	require.Equal(t, want, string(gotBytes1))
+	require.Equal(t, want, string(gotData1))
 
 	r2, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
 	src.Seal()
 
-	gotBytes2, err := io.ReadAll(r2)
+	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
-	require.Equal(t, want, string(gotBytes2))
+	require.Equal(t, want, string(gotData2))
 
 }
 
@@ -281,7 +376,7 @@ func TestClose(t *testing.T) {
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 	recRdr := &rcRecorder{r: f}
-	src := streamcache.NewSource(recRdr)
+	src := NewSource(recRdr)
 
 	r1, err := src.NewReader(ctx)
 	require.NoError(t, err)
@@ -366,7 +461,7 @@ func TestContextAwareness(t *testing.T) {
 
 	wantErr := errors.New("oh noes")
 	originRdr := DelayReader(LimitRandReader(100000), time.Second, true)
-	src := streamcache.NewSource(originRdr)
+	src := NewSource(originRdr)
 
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -389,7 +484,7 @@ func TestErrorHandling(t *testing.T) {
 	const errAfterN = 50
 
 	originRdr := NewErrorAfterNReader(errAfterN, wantErr)
-	src := streamcache.NewSource(originRdr)
+	src := NewSource(originRdr)
 
 	r1, err := src.NewReader(ctx)
 	require.NoError(t, err)
@@ -404,4 +499,9 @@ func TestErrorHandling(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
 	require.Equal(t, errAfterN, len(b2))
+}
+
+func sleepJitter() {
+	d := time.Millisecond * time.Duration(rand.Intn(jitterFactor))
+	time.Sleep(d)
 }

@@ -1,4 +1,4 @@
-package streamcache_test
+package streamcache
 
 import (
 	crand "crypto/rand"
