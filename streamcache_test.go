@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	//numSampleRows = 1000000
 	numSampleRows = 40000
 	numG          = 500
 	jitterFactor  = 30
@@ -66,7 +65,7 @@ func TestRead_MixedCache(t *testing.T) {
 	require.Equal(t, 4, len(src.cache))
 
 	// Seal the source; after this, no more readers can be created.
-	src.Seal()
+	require.NoError(t, src.Seal())
 	require.True(t, src.Sealed())
 	require.False(t, isDone(src))
 	select {
@@ -79,7 +78,7 @@ func TestRead_MixedCache(t *testing.T) {
 	// the source is sealed.
 	r2, err := src.NewReader(ctx)
 	require.Error(t, err)
-	require.Equal(t, ErrSealed, err)
+	require.Equal(t, ErrAlreadySealed, err)
 	require.Nil(t, r2)
 	require.Nil(t, src.Err())
 
@@ -150,7 +149,7 @@ func TestRead_SingleReaderImmediateSeal(t *testing.T) {
 	r, err := src.NewReader(context.Background())
 	require.NoError(t, err)
 
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
@@ -160,7 +159,7 @@ func TestRead_SingleReaderImmediateSeal(t *testing.T) {
 }
 
 func TestRead_NoSeal(t *testing.T) {
-	//t.Parallel()
+	// t.Parallel()
 	src := NewSource(strings.NewReader(anything))
 	r, err := src.NewReader(context.Background())
 	require.NoError(t, err)
@@ -192,7 +191,7 @@ func TestRead_File(t *testing.T) {
 	r, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
@@ -230,6 +229,7 @@ func TestRead_File_Concurrent(t *testing.T) {
 	ctx := context.Background()
 	wantSize, fp := generateSampleFile(t, numSampleRows)
 	wantData, err := os.ReadFile(fp)
+	require.NoError(t, err)
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 
@@ -238,7 +238,7 @@ func TestRead_File_Concurrent(t *testing.T) {
 		r, err := src.NewReader(ctx)
 		require.NoError(t, err)
 
-		go func(i int, r *Reader) {
+		go func(r *Reader) {
 			defer func() { assert.NoError(t, r.Close()) }()
 
 			sleepJitter()
@@ -246,8 +246,7 @@ func TestRead_File_Concurrent(t *testing.T) {
 			gotData, err := io.ReadAll(r)
 			assert.NoError(t, err)
 			assert.Equal(t, string(wantData), string(gotData))
-		}(i, r)
-
+		}(r)
 	}
 
 	select {
@@ -256,7 +255,7 @@ func TestRead_File_Concurrent(t *testing.T) {
 	default:
 	}
 
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	<-src.Done()
 
@@ -293,7 +292,7 @@ func TestConcurrent2(t *testing.T) {
 	for i := range rdrs {
 		go func(i int, r *Reader) {
 			defer func() {
-				//println(fmt.Sprintf("r.Close for %d", i))
+				// println(fmt.Sprintf("r.Close for %d", i))
 				assert.NoError(t, r.Close())
 				wg.Done()
 			}()
@@ -303,7 +302,7 @@ func TestConcurrent2(t *testing.T) {
 			if i > numG/2 {
 				sealOnce.Do(func() {
 					t.Logf("Sealing once on iter %d", i)
-					src.Seal()
+					require.NoError(t, src.Seal())
 				})
 			}
 
@@ -311,7 +310,6 @@ func TestConcurrent2(t *testing.T) {
 			assert.NoError(t, gotErr)
 
 			assert.Equal(t, string(wantData), string(gotData))
-
 		}(i, rdrs[i])
 	}
 
@@ -331,11 +329,11 @@ func TestSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	r, err = src.NewReader(ctx)
 	require.Error(t, err)
-	require.Equal(t, ErrSealed, err)
+	require.Equal(t, ErrAlreadySealed, err)
 	require.Nil(t, r)
 }
 
@@ -356,12 +354,11 @@ func TestSeal2(t *testing.T) {
 	r2, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, want, string(gotData2))
-
 }
 
 func TestClose(t *testing.T) {
@@ -389,7 +386,7 @@ func TestClose(t *testing.T) {
 
 	r2, err := src.NewReader(ctx)
 	require.NoError(t, err)
-	src.Seal()
+	require.NoError(t, src.Seal())
 
 	gotB2, err := io.ReadAll(r2)
 	require.NoError(t, err)
@@ -401,7 +398,7 @@ func TestClose(t *testing.T) {
 // generateSampleFile generates a temp file of sample data with the
 // specified number of rows. It is the caller's responsibility to
 // close the file. Note that the file is removed by t.Cleanup.
-func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
+func generateSampleFile(t *testing.T, rows int) (size int, fp string) { //nolint:unparam
 	f, err := os.CreateTemp("", "")
 	require.NoError(t, err)
 	fp = f.Name()

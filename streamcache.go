@@ -43,56 +43,68 @@ import (
 	"sync"
 )
 
-// ErrSealed is returned by Source.NewReader if the source is
-// already sealed.
-var ErrSealed = errors.New("source is already sealed")
+// ErrAlreadySealed is returned by Source.NewReader and Source.Seal if
+// the source is already sealed.
+var ErrAlreadySealed = errors.New("source is already sealed")
 
 // ErrAlreadyClosed is returned by Reader.Read if the reader is
-// already closed and the reader hasn't already received an error
-// from the origin reader. If Reader has received such an origin error
-// (including io.EOF), that error is returned preferentially.
-// Invoking Reader.Close multiple times is a no-op, and always returns the
-// same origin error (if any).
+// already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
 
-// Source encapsulates an underlying io.Reader that many callers
-// can read from.
+// Source mediates access to an underlying origin io.Reader. Multiple
+// callers can invoke Source.NewReader to obtain a Reader, each of
+// which can read the full contents of the origin reader. Note that the
+// origin is only read from once, and the returned bytes are cached
+// in memory. After Source.Seal is invoked and readers are closed, the
+// final reader discards the cache and reads directly from origin.
 type Source struct {
 	// mu protects concurrent access to Source's fields.
 	mu sync.Mutex
 
+	// done is closed after the source is sealed and the last
+	// reader is closed. See Source.Done.
 	done chan struct{}
 
-	// origin is the underlying reader.
+	// origin is the underlying reader from which bytes are read.
 	origin io.Reader
 
+	// rdrs is the set of unclosed Reader instances created
+	// by Source.NewReader. When a Reader is closed, it is removed
+	// from this slice.
 	rdrs []*Reader
 
 	// sealed is set to true when Seal is called. When sealed is true,
 	// no more calls to NewReader are allowed.
 	sealed bool
 
-	// err is the first (and only) error returned by the underlying reader.
-	// Once err has been set, the underlying reader is never read from again.
-	err error
+	// readErr is the first (and only) error returned by origin's
+	// Read method. Once readErr has been set (to non-nil), origin is
+	// never read from again.
+	readErr error
 
-	// size is the number of bytes read from origin.
+	// size is the count of bytes read from origin.
 	size int
 
 	// cache holds the accumulated bytes read from origin.
+	// It is nilled when the final reader switches to readOriginDirect.
 	cache []byte
 
-	// buf is used as a temporary buffer for reading from origin.
+	// buf is used as a buffer when reading from origin.
+	// It is nilled when the final reader switches to readOriginDirect.
 	buf []byte
 }
 
-// NewSource returns a new source with r as the underlying reader.
+// NewSource returns a new source with r as the underlying origin reader.
 func NewSource(r io.Reader) *Source {
-	return &Source{origin: r, cache: make([]byte, 0), done: make(chan struct{})}
+	return &Source{
+		origin: r,
+		cache:  make([]byte, 0),
+		done:   make(chan struct{}),
+	}
 }
 
 // NewReader returns a new Reader for Source. If Source is already
-// sealed, ErrSealed is returned. If ctx is non-nil, it is used by the
+// sealed, ErrAlreadySealed is returned. If ctx is non-nil, it is used by the
 // returned Reader to check for cancellation before each read.
 // It is the caller's responsibility to close the returned Reader.
 func (s *Source) NewReader(ctx context.Context) (*Reader, error) {
@@ -100,25 +112,37 @@ func (s *Source) NewReader(ctx context.Context) (*Reader, error) {
 	defer s.mu.Unlock()
 
 	if s.sealed {
-		return nil, ErrSealed
+		return nil, ErrAlreadySealed
 	}
 
-	r := &Reader{ctx: ctx, s: s, readFn: s.readAt}
+	r := &Reader{ctx: ctx, s: s, readFn: s.read}
 	s.rdrs = append(s.rdrs, r)
 	return r, nil
 }
 
-// readDirect reads directly from the origin reader. The source's
-// size is incremented as bytes are read form origin, and s.err
-// may be set if origin returns an error.
-func (s *Source) readDirect(_ *Reader, p []byte, _ int) (n int, err error) {
+// readFunc is the type of the Reader.readFn field.
+type readFunc func(r *Reader, p []byte, offset int) (n int, err error)
+
+var (
+	_ readFunc = (*Source)(nil).read
+	_ readFunc = (*Source)(nil).readOriginDirect
+)
+
+// readOriginDirect reads directly from Source.origin. The source's size is
+// incremented as bytes are read from origin, and Source.readErr is set if
+// origin returns an error.
+func (s *Source) readOriginDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	n, err = s.origin.Read(p)
 	s.size += n
-	s.err = err
-	return n, s.err
+	s.readErr = err
+	return n, s.readErr
 }
 
-func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
+// read reads from Source.cache and/or Source.origin. If Source is
+// sealed and r is the final Reader, this method may switch r.readFn
+// to Source.readOriginDirect, such that the remaining reads occur
+// directly against origin, bypassing Source.cache entirely.
+func (s *Source) read(r *Reader, p []byte, offset int) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -157,25 +181,25 @@ func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
 				// The read is satisfied completely by the cache with
 				// no unread cache bytes. Thus, we can nil out s.cache,
 				// because the next read will be direct from origin.
-				n, err = copy(p, s.cache[offset:]), s.err
+				n, err = copy(p, s.cache[offset:]), s.readErr
 				s.cache = nil
-				r.readFn = s.readDirect
+				r.readFn = s.readOriginDirect
 				return n, err
 			case offset == s.size:
 				// The read is beyond the end of the cache, so we go direct.
 				// I'm not actually sure if we can reach this case?
 				s.cache = nil
-				r.readFn = s.readDirect
+				r.readFn = s.readOriginDirect
 				return r.readFn(r, p, offset)
 			case offset > s.size:
 				// Should be impossible.
 				panic("Offset is beyond end of cache")
 			default:
-				// The read is an overlap of the cache and origin.
+				// This read is an overlap of cache and origin.
 			}
 
-			// This read requires combining bytes from the cache with new
-			// bytes from origin. First copy the cache bytes.
+			// This read requires combining bytes from cache with new
+			// bytes from origin. First, copy the cache bytes.
 			n = copy(p, s.cache[offset:])
 
 			// Now that we've got what we need from the cache,
@@ -184,14 +208,15 @@ func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
 
 			// Next, fill the rest of p from origin.
 			var n2 int
-			n2, s.err = s.origin.Read(p[n:])
+			n2, s.readErr = s.origin.Read(p[n:])
 			n += n2
 			s.size += n2
 			// Any subsequent reads will be direct from origin.
-			r.readFn = s.readDirect
-			return n, s.err
+			r.readFn = s.readOriginDirect
+			return n, s.readErr
 		default:
-			//  There are multiple readers, so continue with normal reading.
+			//  There are multiple readers, so we continue with
+			//  normal reading using the cache.
 		}
 	}
 
@@ -201,12 +226,12 @@ func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
 		return copy(p, s.cache[offset:offset+len(p)]), nil
 	}
 
-	if s.err != nil {
-		return copy(p, s.cache[offset:]), s.err
+	if s.readErr != nil {
+		return copy(p, s.cache[offset:]), s.readErr
 	}
 
-	s.ensureBufSize(end - cacheLen)
-	n, s.err = s.origin.Read(s.buf)
+	s.ensureBufLen(end - cacheLen)
+	n, s.readErr = s.origin.Read(s.buf)
 	s.size += n
 
 	if n > 0 {
@@ -215,19 +240,19 @@ func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
 
 	cacheLen = len(s.cache)
 	if offset >= cacheLen {
-		return 0, s.err
+		return 0, s.readErr
 	}
 
 	if end > cacheLen {
 		end = cacheLen
 	}
 
-	return copy(p, s.cache[offset:end]), s.err
+	return copy(p, s.cache[offset:end]), s.readErr
 }
 
 // Done returns a channel that is closed when the Source is done. This channel
 // can be used to wait for work to complete. A source is considered "done" after
-// Seal has been invoked on it and there are no unclosed Reader instances
+// Seal has been invoked on it, and there are no unclosed Reader instances
 // remaining.
 //
 // Note that it's possible that a "done" Source has not closed its underlying
@@ -249,21 +274,17 @@ func (s *Source) Size() int {
 
 // Err returns the first error (if any) that was returned by the underlying
 // origin reader, which may be io.EOF. After the origin reader returns an
-// error, it is never read from again. But, it should still be explicitly
-// closed, by closing all readers returned by Source.NewReader.
+// error, it is never read from again. But typically the origin reader
+// should still be explicitly closed, by closing all of this Source's readers.
 func (s *Source) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.err
+	return s.readErr
 }
 
-func (s *Source) ensureBufSize(n int) {
-	// https://www.calhoun.io/how-to-use-slice-capacity-and-length-in-go/
-	// https://github.com/golang/go/issues/51462
-	// https://stackoverflow.com/questions/48618201/how-to-release-memory-allocated-by-a-slice
-	// https://medium.com/@cerebrovinny/mastering-golang-memory-management-tips-and-tricks-99868f1f4971
-	// https://github.com/golang/go/issues/51462
-
+// ensureBufLen ensures that Source.buf has length n, re-slicing or
+// growing buf as necessary.
+func (s *Source) ensureBufLen(n int) {
 	switch {
 	case s.buf == nil:
 		s.buf = make([]byte, n)
@@ -280,10 +301,9 @@ func (s *Source) ensureBufSize(n int) {
 	s.buf = make([]byte, n)
 }
 
-// close is invoked by Reader.Close to close the Reader. If the Source
-// is sealed, this method will close the underlying reader if it
-// implements io.Closer, and switch to "direct mode" for the final Reader
-// to complete its work.
+// close is invoked by Reader.Close to close itself. If the Source
+// is sealed and r is the final unclosed reader, this method closes
+// the origin reader, if it implements io.Closer.
 func (s *Source) close(r *Reader) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,8 +316,8 @@ func (s *Source) close(r *Reader) error {
 
 	if len(s.rdrs) == 0 {
 		defer close(s.done)
-		// This was the last reader, so we can close the underlying
-		// reader if it implements io.Closer.
+		// r is last Reader, so we can close the origin
+		// reader, if it implements io.Closer.
 		if c, ok := s.origin.(io.Closer); ok {
 			return c.Close()
 		}
@@ -307,13 +327,14 @@ func (s *Source) close(r *Reader) error {
 }
 
 // Seal is called to indicate that no more calls to NewReader are permitted.
-// If there are no existing readers, the Source.Done channel is closed,
-// and the Source is considered completed.
+// If there are no unclosed readers when Seal is invoked, the Source.Done
+// channel is closed, and the Source is considered finished. Subsequent
+// invocations will return ErrAlreadySealed.
 func (s *Source) Seal() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sealed {
-		return ErrSealed
+		return ErrAlreadySealed
 	}
 
 	s.sealed = true
@@ -331,7 +352,8 @@ func (s *Source) Sealed() bool {
 	return s.sealed
 }
 
-// remove returns the slice without v. Element order is not preserved.
+// remove returns the slice a without the first occurrence of v.
+// Element order is not preserved.
 func remove[T any](a []*T, v *T) []*T {
 	// https://stackoverflow.com/a/37335777/6004734
 	for i := range a {
