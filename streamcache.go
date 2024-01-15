@@ -38,23 +38,25 @@ package streamcache
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"sync"
 )
 
-// ErrSealed is returned by Source.NewReadCloser if the source is
+// ErrSealed is returned by Source.NewReader if the source is
 // already sealed.
 var ErrSealed = errors.New("already sealed")
 
 // Source encapsulates an underlying io.Reader that many callers
 // can read from.
 type Source struct {
-	src    io.Reader
-	mu     sync.Mutex
-	sealed bool
-	count  int
-	buf    []byte
+	src      io.Reader
+	err      error
+	mu       sync.Mutex
+	sealed   bool
+	rdrCount int
+	buf      []byte
 }
 
 // NewSource returns a new source with r as the underlying reader.
@@ -62,9 +64,9 @@ func NewSource(r io.Reader) *Source {
 	return &Source{src: r, buf: make([]byte, 0, 512)}
 }
 
-// NewReadCloser returns a new ReadCloser for Source. It is the caller's
+// NewReader returns a new ReadCloser for Source. It is the caller's
 // responsibility to close the returned ReadCloser.
-func (s *Source) NewReadCloser() (*ReadCloser, error) {
+func (s *Source) NewReader(ctx context.Context) (*ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -72,8 +74,8 @@ func (s *Source) NewReadCloser() (*ReadCloser, error) {
 		return nil, ErrSealed
 	}
 
-	s.count++
-	return &ReadCloser{s: s}, nil
+	s.rdrCount++
+	return &ReadCloser{ctx: ctx, s: s}, nil
 }
 
 func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
@@ -87,38 +89,41 @@ func (s *Source) readAt(p []byte, offset int64) (n int, err error) {
 		return copy(p, s.buf[offset:int(offset)+len(p)]), nil
 	}
 
+	if s.err != nil {
+		return copy(p, s.buf[offset:]), s.err
+	}
+
 	need := end - bufLen
+	// TODO: We should be able to cache tmp and re-use it?
 	tmp := make([]byte, need)
-	n, err = s.src.Read(tmp)
+	n, s.err = s.src.Read(tmp)
 
 	if n > 0 {
-		s.buf = append(s.buf, p...)
-		return len(p), nil
+		s.buf = append(s.buf, tmp[:n]...)
 	}
 
 	bufLen = len(s.buf)
-
 	if int(offset) >= bufLen {
-		return 0, err
+		return 0, s.err
 	}
 
 	if end > bufLen {
 		end = bufLen
 	}
 
-	return copy(p, s.buf[offset:end]), err
+	return copy(p, s.buf[offset:end]), s.err
 }
 
 func (s *Source) close(rc *ReadCloser) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.count--
+	s.rdrCount--
 	if !s.sealed {
 		return nil
 	}
 
-	switch s.count {
+	switch s.rdrCount {
 	default:
 		// There's still more than one active ReadCloser instance, so we
 		// don't close the underlying reader.
@@ -149,18 +154,19 @@ func (s *Source) close(rc *ReadCloser) error {
 }
 
 // Seal is called to indicate that there will be no more calls
-// to NewReadCloser.
+// to NewReader.
 func (s *Source) Seal() {
 	s.mu.Lock()
 	s.sealed = true
 	s.mu.Unlock()
 }
 
-// ReadCloser is returned by Source.NewReadCloser. It is the
+// ReadCloser is returned by Source.NewReader. It is the
 // responsibility of the receiver to close the returned ReadCloser.
 type ReadCloser struct {
 	mu        sync.Mutex
 	s         *Source
+	ctx       context.Context
 	offset    int
 	closeOnce sync.Once
 	closeErr  error
@@ -174,15 +180,23 @@ type ReadCloser struct {
 }
 
 // Read implements io.Reader.
-func (rc *ReadCloser) Read(p []byte) (n int, err error) {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
+func (r *ReadCloser) Read(p []byte) (n int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	if rc.finalReadCloser == nil {
+	if r.ctx != nil {
+		select {
+		case <-r.ctx.Done():
+			return 0, context.Cause(r.ctx)
+		default:
+		}
+	}
+
+	if r.finalReadCloser == nil {
 		// We're not in "last-man-standing" mode, so just continue
 		// as normal.
-		n, err = rc.s.readAt(p, int64(rc.offset))
-		rc.offset += n
+		n, err = r.s.readAt(p, int64(r.offset))
+		r.offset += n
 		return n, err
 	}
 
@@ -190,7 +204,7 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 	// to "direct mode". That is to say, this final ReadCloser will
 	// now read directly from the finalReadCloser instead of going
 	// through the cache.
-	return rc.finalReadCloser.Read(p)
+	return r.finalReadCloser.Read(p)
 }
 
 // Close closes this ReadCloser. If the parent Source is not sealed,
@@ -201,12 +215,12 @@ func (rc *ReadCloser) Read(p []byte) (n int, err error) {
 //
 // Note that subsequent calls to this method are no-op and return the
 // same result as the first call.
-func (rc *ReadCloser) Close() error {
-	rc.closeOnce.Do(func() {
-		rc.closeErr = rc.s.close(rc)
+func (r *ReadCloser) Close() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = r.s.close(r)
 	})
 
-	return rc.closeErr
+	return r.closeErr
 }
 
 // finalReadCloser is used by the final child of Source.NewReader

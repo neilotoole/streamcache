@@ -2,8 +2,9 @@ package streamcache_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"strconv"
@@ -29,13 +30,16 @@ const (
 var _ io.ReadCloser = (*streamcache.ReadCloser)(nil)
 
 func TestBasic(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
 	f := generateSampleFile(t, numSampleRows)
 	rcr := &readCloseRecorder{Reader: f}
 	src := streamcache.NewSource(rcr)
 	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
 
-	r, err := src.NewReadCloser()
+	r, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
 	src.Seal()
@@ -52,6 +56,9 @@ func TestBasic(t *testing.T) {
 }
 
 func TestConcurrent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
 	f := generateSampleFile(t, numSampleRows)
 	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
@@ -60,9 +67,10 @@ func TestConcurrent(t *testing.T) {
 	src := streamcache.NewSource(rcr)
 	require.NoError(t, err)
 
-	g := &errgroup.Group{}
+	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < numG; i++ {
-		r, err := src.NewReadCloser()
+		var r *streamcache.ReadCloser
+		r, err = src.NewReader(gCtx)
 		require.NoError(t, err)
 
 		g.Go(func() error {
@@ -73,7 +81,8 @@ func TestConcurrent(t *testing.T) {
 			// Add some jitter
 			time.Sleep(time.Nanosecond * time.Duration(rand.Intn(jitterFactor)))
 
-			gotB, err := io.ReadAll(r)
+			var gotB []byte
+			gotB, err = io.ReadAll(r)
 			if err != nil {
 				assert.NoError(t, r.Close())
 				return err
@@ -92,20 +101,27 @@ func TestConcurrent(t *testing.T) {
 }
 
 func TestSeal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
 	src := streamcache.NewSource(strings.NewReader("anything"))
-	r, err := src.NewReadCloser()
+	r, err := src.NewReader(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
 	src.Seal()
 
-	r, err = src.NewReadCloser()
+	r, err = src.NewReader(ctx)
 	require.Error(t, err)
 	require.Equal(t, streamcache.ErrSealed, err)
 	require.Nil(t, r)
 }
 
 func TestClose(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
 	f := generateSampleFile(t, numSampleRows)
 	wantB, err := io.ReadAll(f)
 	require.NoError(t, err)
@@ -113,20 +129,20 @@ func TestClose(t *testing.T) {
 	rcr := &readCloseRecorder{Reader: f}
 	src := streamcache.NewSource(rcr)
 
-	r1, err := src.NewReadCloser()
+	r1, err := src.NewReader(ctx)
 	require.NoError(t, err)
 
-	gotB1, err := ioutil.ReadAll(r1)
+	gotB1, err := io.ReadAll(r1)
 	require.NoError(t, err)
 	require.Equal(t, wantB, gotB1)
 	require.NoError(t, r1.Close())
 	require.Equal(t, 0, rcr.closed)
 
-	r2, err := src.NewReadCloser()
+	r2, err := src.NewReader(ctx)
 	require.NoError(t, err)
 	src.Seal()
 
-	gotB2, err := ioutil.ReadAll(r2)
+	gotB2, err := io.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, wantB, gotB2)
 	require.NoError(t, r2.Close())
@@ -146,8 +162,8 @@ func generateSampleFile(t *testing.T, rows int) *os.File {
 	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z\n"
 	for i := 0; i < rows; i++ {
 		// Actual data lines will look like:
+		//  0,A,B,C...
 		//  1,A,B,C...
-		//  2,A,B,C...
 		_, err = f.WriteString(strconv.Itoa(i) + "," + line)
 		require.NoError(t, err)
 	}
@@ -177,4 +193,49 @@ func (rc *readCloseRecorder) Close() error {
 
 	rc.closed++
 	return nil
+}
+
+func TestContextAwareness(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("oh noes")
+	originRdr := DelayReader(LimitRandReader(100000), time.Second, true)
+	src := streamcache.NewSource(originRdr)
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancelCause(ctx)
+	time.AfterFunc(time.Second, func() {
+		cancel(wantErr)
+	})
+
+	r, err := src.NewReader(ctx)
+	require.NoError(t, err)
+	_, gotErr := io.ReadAll(r)
+	require.Error(t, gotErr)
+	require.True(t, errors.Is(gotErr, wantErr))
+}
+
+func TestErrorHandling(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	wantErr := errors.New("oh noes")
+	const errAfterN = 50
+
+	originRdr := NewErrorAfterNReader(errAfterN, wantErr)
+	src := streamcache.NewSource(originRdr)
+
+	r1, err := src.NewReader(ctx)
+	require.NoError(t, err)
+	b1, err := io.ReadAll(r1)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, wantErr))
+	require.Equal(t, errAfterN, len(b1))
+
+	r2, err := src.NewReader(ctx)
+	require.NoError(t, err)
+	b2, err := io.ReadAll(r2)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, wantErr))
+	require.Equal(t, errAfterN, len(b2))
 }
