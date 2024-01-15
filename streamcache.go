@@ -39,6 +39,7 @@ package streamcache
 import (
 	"context"
 	"errors"
+	"github.com/samber/lo"
 	"io"
 	"sync"
 )
@@ -56,6 +57,8 @@ type Source struct {
 	// origin is the underlying reader.
 	origin io.Reader
 
+	rdrs []*Reader
+
 	// sealed is set to true when Seal is called. When sealed is true,
 	// no more calls to NewReader are allowed.
 	sealed bool
@@ -66,6 +69,9 @@ type Source struct {
 
 	// rdrCount is the number of active Reader instances.
 	rdrCount int
+
+	// size is the number of bytes read from origin.
+	size int
 
 	// cache holds the accumulated bytes read from origin.
 	cache []byte
@@ -92,14 +98,54 @@ func (s *Source) NewReader(ctx context.Context) (*Reader, error) {
 	}
 
 	s.rdrCount++
-	return &Reader{ctx: ctx, s: s}, nil
+	r := &Reader{ctx: ctx, s: s, rdrAtFunc: s.readAt}
+	s.rdrs = append(s.rdrs, r)
+	return r, nil
 }
 
-func (s *Source) readAt(p []byte, offset int) (n int, err error) {
-	end := offset + len(p)
+type readerAtFunc func(r *Reader, p []byte, offset int) (n int, err error)
 
+func (s *Source) readAtDirect(r *Reader, p []byte, _ int) (n int, err error) {
+	n, s.err = s.origin.Read(p)
+	s.size += n
+	return n, s.err
+}
+
+func (s *Source) readAt(r *Reader, p []byte, offset int) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	end := offset + len(p)
+	if s.sealed {
+		switch len(s.rdrs) {
+		case 0:
+			panic("sealed but no readers")
+		case 1:
+			// It's the final reader
+			switch {
+			case end < len(s.cache):
+				// The read can be satisfied entirely from the cache.
+				return copy(p, s.cache[offset:]), nil
+			case end == len(s.cache):
+				return copy(p, s.cache[offset:]), s.err
+			case offset >= len(s.cache):
+				r.rdrAtFunc = s.readAtDirect
+				return r.rdrAtFunc(r, p, offset)
+			default:
+			}
+
+			// We need to read from both the cache and the origin.
+			n = copy(p, s.cache[offset:])
+			var got int
+			got, s.err = s.origin.Read(p[n:])
+			s.size += got
+			n += got
+			r.rdrAtFunc = s.readAtDirect
+			return n, s.err
+		default:
+			// Fall through
+		}
+	}
 
 	cacheLen := len(s.cache)
 	if end < cacheLen {
@@ -114,6 +160,7 @@ func (s *Source) readAt(p []byte, offset int) (n int, err error) {
 	need := end - cacheLen
 	s.ensureBufSize(need)
 	n, s.err = s.origin.Read(s.buf)
+	s.size += n
 
 	if n > 0 {
 		s.cache = append(s.cache, s.buf[:n]...)
@@ -129,6 +176,13 @@ func (s *Source) readAt(p []byte, offset int) (n int, err error) {
 	}
 
 	return copy(p, s.cache[offset:end]), s.err
+}
+
+// Size returns the number of bytes read from the underlying reader.
+func (s *Source) Size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.size
 }
 
 func (s *Source) ensureBufSize(n int) {
@@ -163,143 +217,68 @@ func (s *Source) close(r *Reader) error {
 	defer s.mu.Unlock()
 
 	s.rdrCount--
+	s.rdrs = lo.Without(s.rdrs, r)
+
 	if !s.sealed {
 		return nil
 	}
 
-	switch s.rdrCount {
-	default:
-		// There's still multiple active Reader instances, so we
-		// don't close the underlying reader.
-		return nil
-	case 0:
-		// r was the last reader standing, so we close the underlying
+	if len(s.rdrs) == 0 {
+		// This was the last reader, so we can close the underlying
 		// reader if it implements io.Closer.
 		if c, ok := s.origin.(io.Closer); ok {
 			return c.Close()
 		}
 		return nil
-	case 1:
-		// Continues below
 	}
 
-	s.buf = nil
-	if len(s.cache)-r.offset == 0 {
-		// r has read already read everything in the cache, so
-		// it can switch to reading directly from the origin
-		// for the remaining bytes.
-		r.finalReader = s.origin
-		s.cache = nil
-		return nil
-	}
-
-	// There's still some bytes in the cache that r hasn't read.
-	// We construct a joinReader that is the concatenation of the
-	// remaining cache bytes plus the origin reader. Effectively
-	// it's a lightweight io.MultiReader.
-	r.finalReader = &joinReader{
-		unreadCache: s.cache[r.offset:],
-		origin:      s.origin,
-	}
-	s.cache = nil
 	return nil
+	//
+	//print("she's sealed\n")
+	//switch s.rdrCount {
+	//default:
+	//	// There's still multiple active Reader instances, so we
+	//	// don't close the underlying reader.
+	//	return nil
+	//case 0:
+	//	// r was the last reader standing, so we close the underlying
+	//	// reader if it implements io.Closer.
+	//	if c, ok := s.origin.(io.Closer); ok {
+	//		return c.Close()
+	//	}
+	//	return nil
+	//case 1:
+	//	// Continues below
+	//}
+
+	//s.buf = nil
+	//if len(s.cache)-r.offset == 0 {
+	//	// r has read already read everything in the cache, so
+	//	// it can switch to reading directly from the origin
+	//	// for the remaining bytes.
+	//	r.finalReader = s.origin
+	//	s.cache = nil
+	//	return nil
+	//}
+	//
+	//// There's still some bytes in the cache that r hasn't read.
+	//// We construct a joinReader that is the concatenation of the
+	//// remaining cache bytes plus the origin reader. Effectively
+	//// it's a lightweight io.MultiReader.
+	//r.finalReader = &joinReader{
+	//	src:         s,
+	//	unreadCache: s.cache[r.offset:],
+	//	origin:      s.origin,
+	//}
+	//s.cache = nil
+	//return nil
 }
 
 // Seal is called to indicate that there will be no more calls
 // to NewReader.
 func (s *Source) Seal() {
 	s.mu.Lock()
+	println("sealing her")
 	s.sealed = true
 	s.mu.Unlock()
-}
-
-// Reader is returned by Source.NewReader. It is the
-// responsibility of the receiver to close the returned Reader.
-type Reader struct {
-	s         *Source
-	ctx       context.Context
-	offset    int
-	closeOnce sync.Once
-	closeErr  error
-
-	// finalReader is only set if this Reader becomes the
-	// last-man-standing of the parent Source's spawned Reader
-	// children. If finalReader is set, then it will be
-	// used by Read to read out the rest of data from the parent
-	// Source's underlying Reader.
-	finalReader io.Reader
-}
-
-// Read implements io.Reader.
-func (r *Reader) Read(p []byte) (n int, err error) {
-	if r.ctx != nil {
-		select {
-		case <-r.ctx.Done():
-			return 0, context.Cause(r.ctx)
-		default:
-		}
-	}
-
-	if r.finalReader != nil {
-		// This Reader is in "last-man-standing" mode, so we switch
-		// to "direct mode". That is to say, this final Reader will
-		// now read directly from finalReader instead of going
-		// through the cache.
-		return r.finalReader.Read(p)
-	}
-
-	// We're not in "last-man-standing" mode, so just continue
-	// as normal.
-	n, err = r.s.readAt(p, r.offset)
-	r.offset += n
-	return n, err
-}
-
-// Close closes this Reader. If the parent Source is not sealed,
-// this method is effectively a no-op. If the parent Source is sealed
-// and this is the last remaining reader, the parent Source's underlying
-// io.Reader is closed (if it implements io.Closer).
-//
-// Note that subsequent calls to this method are no-op and return the
-// same result as the first call.
-func (r *Reader) Close() error {
-	r.closeOnce.Do(func() {
-		r.closeErr = r.s.close(r)
-	})
-
-	return r.closeErr
-}
-
-var _ io.Reader = (*joinReader)(nil)
-
-// joinReader is an io.Reader whose Read method reads from the
-// concatenation of the unreadCache, and the origin reader. Effectively,
-// joinReader is a lightweight io.MultiReader.
-type joinReader struct {
-	unreadCache []byte
-	origin      io.Reader
-}
-
-// Read implements io.Reader.
-func (jr *joinReader) Read(p []byte) (n int, err error) {
-	cacheLen := len(jr.unreadCache)
-	if cacheLen == 0 {
-		// The cache is empty, so we read from the origin.
-		return jr.origin.Read(p)
-	}
-
-	if len(p) <= cacheLen {
-		// The read can be satisfied entirely from the cache.
-		n = copy(p, jr.unreadCache)
-		jr.unreadCache = jr.unreadCache[n:]
-		return n, nil
-	}
-
-	// The read will be partially from the cache, with the remainder
-	// coming from the origin.
-	copy(p, jr.unreadCache)
-	n, err = jr.origin.Read(p[cacheLen:])
-	n += cacheLen
-	jr.unreadCache = nil
-	return n, err
 }
