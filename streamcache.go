@@ -40,8 +40,8 @@ package streamcache
 import (
 	"context"
 	"errors"
+	"github.com/neilotoole/streamcache/upmutex"
 	"io"
-	"sync"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
@@ -61,7 +61,8 @@ var ErrAlreadyClosed = errors.New("reader is already closed")
 // the remaining bytes.
 type Cache struct {
 	// mu guards concurrent access to Cache's fields and methods.
-	mu sync.Mutex
+	mu upmutex.UpgradableRWMutex
+	//srcMu   *sync.Mutex
 
 	// done is closed after the Cache is sealed and the last
 	// reader is closed. See Cache.Done.
@@ -110,6 +111,8 @@ func New(src io.Reader) *Cache {
 		src:   src,
 		cache: make([]byte, 0),
 		done:  make(chan struct{}),
+		//cacheMu: &sync.Mutex{},
+		//srcMu:   &sync.Mutex{},
 	}
 }
 
@@ -143,6 +146,9 @@ var (
 // src returns an error.
 func (c *Cache) readOriginDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	n, err = c.src.Read(p)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.size += n
 	c.readErr = err
 	return n, c.readErr
@@ -153,8 +159,9 @@ func (c *Cache) readOriginDirect(_ *Reader, p []byte, _ int) (n int, err error) 
 // to Cache.readOriginDirect, such that the remaining reads occur
 // directly against src, bypassing Cache.cache entirely.
 func (c *Cache) read(r *Reader, p []byte, offset int) (n int, err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+
+	c.mu.UpgradableRLock()
+	defer c.mu.UpgradableRUnlock()
 
 	end := offset + len(p)
 	if c.sealed {
@@ -199,7 +206,14 @@ func (c *Cache) read(r *Reader, p []byte, offset int) (n int, err error) {
 				// The read is beyond the end of the cache, so we go direct.
 				c.cache = nil
 				r.readFn = c.readOriginDirect
-				return r.readFn(r, p, offset)
+
+				c.mu.UpgradeWLock()
+				n, err = c.src.Read(p)
+				c.size += n
+				c.readErr = err
+				return n, c.readErr
+
+				//return r.readFn(r, p, offset
 			case offset > c.size:
 				// Should be impossible.
 				panic("Offset is beyond end of cache")
@@ -217,6 +231,7 @@ func (c *Cache) read(r *Reader, p []byte, offset int) (n int, err error) {
 
 			// Next, fill the rest of p from src.
 			var n2 int
+			c.mu.UpgradeWLock()
 			n2, c.readErr = c.src.Read(p[n:])
 			n += n2
 			c.size += n2
@@ -239,6 +254,7 @@ func (c *Cache) read(r *Reader, p []byte, offset int) (n int, err error) {
 		return copy(p, c.cache[offset:]), c.readErr
 	}
 
+	c.mu.UpgradeWLock()
 	c.ensureBufLen(end - cacheLen)
 	n, c.readErr = c.src.Read(c.buf)
 	c.size += n
@@ -246,7 +262,6 @@ func (c *Cache) read(r *Reader, p []byte, offset int) (n int, err error) {
 	if n > 0 {
 		c.cache = append(c.cache, c.buf[:n]...)
 	}
-
 	cacheLen = len(c.cache)
 	if offset >= cacheLen {
 		return 0, c.readErr
@@ -276,8 +291,8 @@ func (c *Cache) Done() <-chan struct{} {
 // Size returns the number of bytes read from the underlying reader.
 // This value increases as readers read from the Cache.
 func (c *Cache) Size() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.size
 }
 
@@ -286,8 +301,8 @@ func (c *Cache) Size() int {
 // error, it is never read from again. But typically the source reader
 // should still be explicitly closed, by closing all of this Cache's readers.
 func (c *Cache) Err() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.readErr
 }
 
@@ -356,8 +371,8 @@ func (c *Cache) Seal() error {
 
 // Sealed returns true if Seal has been invoked.
 func (c *Cache) Sealed() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.sealed
 }
 
