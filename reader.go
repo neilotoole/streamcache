@@ -21,6 +21,8 @@ type Reader struct {
 	// c is the Reader's parent Cache.
 	c *Cache
 
+	cacheFillNotifyCh chan struct{}
+
 	// readFn is the func that Reader.Read invokes to read bytes.
 	// Initially it is set to Cache.read, but if this reader
 	// becomes the last-man-standing, this field may be set
@@ -70,6 +72,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	}
 
 	n, err = r.readFn(r, p, r.offset)
+
 	r.readErr = err
 	r.offset += n
 	return n, err

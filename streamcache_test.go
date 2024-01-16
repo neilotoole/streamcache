@@ -148,6 +148,26 @@ func TestSingleReaderImmediateSeal(t *testing.T) {
 	require.True(t, isDone(cache))
 }
 
+func TestStringReader(t *testing.T) {
+	in := strings.Repeat(anything, 5)
+	r := strings.NewReader(in)
+
+	buf := make([]byte, 4)
+	var n int
+	var err error
+	var count int
+	for {
+		n, err = r.Read(buf)
+		count += n
+		t.Logf("Read %d bytes in iteration |  err: %s", n, err)
+		if err != nil {
+			break
+		}
+	}
+
+	t.Logf("total bytes read: %d", count)
+}
+
 func TestReader_NoSeal(t *testing.T) {
 	t.Parallel()
 
