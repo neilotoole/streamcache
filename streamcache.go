@@ -42,6 +42,7 @@ import (
 	"errors"
 	"github.com/neilotoole/streamcache/upmutex"
 	"io"
+	"sync"
 	"sync/atomic"
 )
 
@@ -64,6 +65,8 @@ type Cache struct {
 	// mu guards concurrent access to Cache's fields and methods.
 	mu *upmutex.UpgradableRWMutex
 	//mu *sync.Mutex
+
+	srcMu *sync.Mutex
 
 	fillTo     *atomic.Int64
 	fillNotify chan *Reader

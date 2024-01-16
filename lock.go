@@ -6,3 +6,4 @@ package streamcache
 // https://www.reddit.com/r/golang/comments/10kxawn/how_to_implement_a_mutex_queue_in_golang/
 // https://github.com/oleiade/lane#queue
 // https://github.com/zyedidia/generic/tree/master/queue
+// https://www.theserverside.com/news/1365243/Implementing-a-Data-Cache-using-Readers-And-Writers
