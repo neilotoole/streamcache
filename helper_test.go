@@ -15,14 +15,13 @@ import (
 
 var _ io.Reader = (*delayReader)(nil)
 
-// DelayReader returns an io.Reader that delays on each read from r.
-// This is primarily intended for testing.
+// newDelayReader returns an io.Reader that delays on each read from r.
 // If jitter is true, a randomized jitter factor is added to the delay.
 // If r implements io.Closer, the returned reader will also
 // implement io.Closer; if r doesn't implement io.Closer,
 // the returned reader will not implement io.Closer.
 // If r is nil, nil is returned.
-func DelayReader(r io.Reader, delay time.Duration, jitter bool) io.Reader {
+func newDelayReader(r io.Reader, delay time.Duration, jitter bool) io.Reader {
 	if r == nil {
 		return nil
 	}
@@ -69,9 +68,9 @@ func (d delayReadCloser) Close() error {
 
 var _ io.Reader = (*errorAfterNReader)(nil)
 
-// NewErrorAfterNReader returns an io.Reader that returns err after
+// newErrorAfterNReader returns an io.Reader that returns err after
 // reading n random bytes from crypto/rand.Reader.
-func NewErrorAfterNReader(n int, err error) io.Reader {
+func newErrorAfterNReader(n int, err error) io.Reader {
 	return &errorAfterNReader{afterN: n, err: err}
 }
 
@@ -114,7 +113,7 @@ func TestNewErrorAfterNReader_Read(t *testing.T) {
 
 	b := make([]byte, bufSize)
 
-	r := NewErrorAfterNReader(errAfterN, wantErr)
+	r := newErrorAfterNReader(errAfterN, wantErr)
 	n, err := r.Read(b)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
@@ -131,15 +130,15 @@ func TestNewErrorAfterNReader_ReadAll(t *testing.T) {
 	const errAfterN = 50
 	wantErr := errors.New("oh dear")
 
-	r := NewErrorAfterNReader(errAfterN, wantErr)
+	r := newErrorAfterNReader(errAfterN, wantErr)
 	b, err := io.ReadAll(r)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
 	require.Equal(t, errAfterN, len(b))
 }
 
-// LimitRandReader returns an io.Reader that reads up to limit bytes
+// newLimitRandReader returns an io.Reader that reads up to limit bytes
 // from crypto/rand.Reader.
-func LimitRandReader(limit int64) io.Reader {
+func newLimitRandReader(limit int64) io.Reader {
 	return io.LimitReader(crand.Reader, limit)
 }
