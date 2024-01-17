@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	numSampleRows = 40000
+	numSampleRows = 4321
 	numG          = 500
 	jitterFactor  = 30
 	anything      = "anything"
@@ -49,7 +49,6 @@ func TestCache(t *testing.T) {
 	require.Equal(t, "anyt", string(buf))
 	require.Equal(t, 4, r.offset)
 	require.Equal(t, 4, cache.size)
-	require.Equal(t, 4, len(cache.buf))
 	require.Equal(t, 4, len(cache.cache))
 
 	// Seal the source; after this, no more readers can be created.

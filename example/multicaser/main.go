@@ -60,9 +60,9 @@ func exec2(ctx context.Context, in io.Reader, out io.Writer) error {
 			return err
 		}
 	}
-	rdrs[0].Name = "upper"
-	rdrs[1].Name = "lower"
-	rdrs[2].Name = "regular"
+	rdrs[0].Name = "red-upper"
+	rdrs[1].Name = "blue-lower"
+	rdrs[2].Name = "green-regular"
 
 	if err = cache.Seal(); err != nil {
 		return err
