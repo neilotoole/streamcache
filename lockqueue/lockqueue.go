@@ -3,7 +3,6 @@ package lockqueue
 import (
 	"fmt"
 	"github.com/oleiade/lane/v2"
-	"sync"
 )
 
 type request struct {
@@ -24,20 +23,28 @@ func newRequest(name string) *request {
 type Unlock func()
 
 type Q struct {
-	muCh     chan *sync.Mutex
+	//muCh     chan *sync.Mutex
+	muCh     chan struct{}
 	requests *lane.Queue[*request]
 }
 
 func NewQ() *Q {
-	mu := &sync.Mutex{}
+	//mu := struct{}{}
 
 	q := &Q{
-		muCh:     make(chan *sync.Mutex, 1),
+		muCh:     make(chan struct{}, 1),
 		requests: lane.NewQueue[*request](),
 	}
-	q.muCh <- mu
+	q.muCh <- struct{}{}
 	return q
 }
+
+//func (q *Q) TryLock() Unlock {
+//	select {
+//	case mu := <-q.muCh:
+//	default:
+//	}
+//}
 
 func (q *Q) Lock(name string) Unlock {
 	fmt.Println(name, "acquiring...")
@@ -50,7 +57,7 @@ func (q *Q) Lock(name string) Unlock {
 		select {
 		case unlock := <-req.ch:
 			return unlock
-		case mu := <-q.muCh:
+		case <-q.muCh:
 			headReq, ok := q.requests.Dequeue()
 			if !ok {
 				panic("queue is empty")
@@ -63,10 +70,14 @@ func (q *Q) Lock(name string) Unlock {
 				//fmt.Println(name, "Unlocking mu")
 				//mu.Unlock()
 				fmt.Println(name, "unlocked")
-				q.muCh <- mu
+				q.muCh <- struct{}{}
 			}
 			//fmt.Println(name, "Sent unlock func")
 		}
 	}
 
+}
+
+func (q *Q) unlockFunc() {
+	q.muCh <- struct{}{}
 }

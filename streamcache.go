@@ -40,6 +40,7 @@ package streamcache
 import (
 	"context"
 	"errors"
+	"github.com/neilotoole/streamcache/muqu"
 	"io"
 	"log/slog"
 	"runtime"
@@ -68,6 +69,8 @@ type Cache struct {
 
 	// srcMu guards concurrent access to reading from src.
 	srcMu sync.Mutex
+
+	srcMuQ *muqu.Mutex
 
 	logMu sync.Mutex // FIXME: delete
 
@@ -121,10 +124,11 @@ type Cache struct {
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		log:   log,
-		src:   src,
-		cache: make([]byte, 0),
-		done:  make(chan struct{}),
+		log:    log,
+		src:    src,
+		srcMuQ: muqu.New(),
+		cache:  make([]byte, 0),
+		done:   make(chan struct{}),
 	}
 
 	return c
@@ -214,20 +218,21 @@ func (c *Cache) writeUnlock(r *Reader, log *slog.Logger) {
 
 func (c *Cache) srcLock(r *Reader, log *slog.Logger) {
 	c.Infof(r, log, slog.LevelDebug, "src lock: before")
-	c.srcMu.Lock()
+	c.srcMuQ.Lock()
 	c.Infof(r, log, slog.LevelDebug, "src lock: after")
 }
 
 func (c *Cache) trySrcLock(r *Reader, log *slog.Logger) bool {
 	c.Infof(r, log, slog.LevelDebug, "try src lock: before")
-	ok := c.srcMu.TryLock()
+	ok := c.srcMuQ.TryLock()
+	//ok := c.srcMu.TryLock()
 	c.Infof(r, log, slog.LevelDebug, "try src lock: after: %v", ok)
 	return ok
 }
 
 func (c *Cache) srcUnlock(r *Reader, log *slog.Logger) {
 	c.Infof(r, log, slog.LevelDebug, "src unlock: before")
-	c.srcMu.Unlock()
+	c.srcMuQ.Unlock()
 	c.Infof(r, log, slog.LevelDebug, "src unlock: after")
 }
 
@@ -306,6 +311,8 @@ TOP: // FIXME: do we still need TOP
 		c.readUnlock(r, log)
 
 		// And now we acquire src lock, so that we can read from src.
+
+		//srcLock := c.rrSrcMu.Lock(r.Name)
 		c.srcLock(r, log)
 		//goto TOP
 
