@@ -164,7 +164,7 @@ func TestStringReader(t *testing.T) {
 		}
 	}
 
-	t.Logf("total bytes read: %d", count)
+	t.Logf("total bytes readMain: %d", count)
 }
 
 func TestReader_NoSeal(t *testing.T) {

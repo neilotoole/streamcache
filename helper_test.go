@@ -1,16 +1,14 @@
 package streamcache
 
+// File helper_test.go contains test helper functionality.
+
 import (
 	crand "crypto/rand"
-	"errors"
 	"fmt"
 	"io"
 	mrand "math/rand"
 	"sync"
-	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 var _ io.Reader = (*delayReader)(nil)
@@ -52,8 +50,6 @@ func (d delayReader) Read(p []byte) (n int, err error) {
 	return d.r.Read(p)
 }
 
-var _ io.ReadCloser = (*delayReadCloser)(nil)
-
 type delayReadCloser struct {
 	delayReader
 }
@@ -65,8 +61,6 @@ func (d delayReadCloser) Close() error {
 	}
 	return nil
 }
-
-var _ io.Reader = (*errorAfterNReader)(nil)
 
 // newErrorAfterNReader returns an io.Reader that returns err after
 // reading n random bytes from crypto/rand.Reader.
@@ -98,43 +92,10 @@ func (r *errorAfterNReader) Read(p []byte) (n int, err error) {
 	}
 	n, _ = crand.Read(p[:allowed])
 	if n != allowed {
-		panic(fmt.Sprintf("expected to read %d bytes, got %d", allowed, n))
+		panic(fmt.Sprintf("expected to readMain %d bytes, got %d", allowed, n))
 	}
 	r.count += n
 	return n, r.err
-}
-
-func TestNewErrorAfterNReader_Read(t *testing.T) {
-	const (
-		errAfterN = 50
-		bufSize   = 100
-	)
-	wantErr := errors.New("oh dear")
-
-	b := make([]byte, bufSize)
-
-	r := newErrorAfterNReader(errAfterN, wantErr)
-	n, err := r.Read(b)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, wantErr))
-	require.Equal(t, errAfterN, n)
-
-	b = make([]byte, bufSize)
-	n, err = r.Read(b)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, wantErr))
-	require.Equal(t, 0, n)
-}
-
-func TestNewErrorAfterNReader_ReadAll(t *testing.T) {
-	const errAfterN = 50
-	wantErr := errors.New("oh dear")
-
-	r := newErrorAfterNReader(errAfterN, wantErr)
-	b, err := io.ReadAll(r)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, wantErr))
-	require.Equal(t, errAfterN, len(b))
 }
 
 // newLimitRandReader returns an io.Reader that reads up to limit bytes
