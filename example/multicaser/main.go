@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/neilotoole/sq/libsq/core/lg/devlog"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/neilotoole/streamcache"
@@ -19,6 +22,19 @@ const (
 	ansiBlue  = "\033[34m"
 )
 
+func printErr(err error) {
+	fmt.Fprintf(os.Stderr, ansiRed+"error: "+err.Error()+ansiReset+"\n")
+}
+
+func getLogFile() (*os.File, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	name := filepath.Join(home, "multicaser.log")
+	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+}
+
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
 
@@ -30,8 +46,16 @@ func main() {
 		cancelFn()
 	}()
 
-	fmt.Fprintf(os.Stdin, "multicaser: reading from stdin, writing to stdout\n\n")
-	if err := exec(ctx, os.Stdin, os.Stdout); err != nil {
+	f, err := getLogFile()
+	if err != nil {
+		printErr(err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	log := slog.New(devlog.NewHandler(f, slog.LevelDebug))
+
+	fmt.Fprintf(os.Stdin, "multicaser: enter text and press [RETURN]\n")
+	if err := exec(ctx, log, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, ansiRed+"error: "+err.Error()+ansiReset)
 		cancelFn()
 		os.Exit(1)
@@ -39,7 +63,7 @@ func main() {
 	cancelFn()
 }
 
-func exec(ctx context.Context, in io.Reader, out io.Writer) error {
+func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) error {
 	upper := func(s string) string {
 		return ansiRed + strings.ToUpper(s) + ansiReset
 	}
@@ -53,7 +77,9 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 
 	transforms := []func(string) string{upper, lower, regular}
-	cache := streamcache.New(in)
+
+	cache := streamcache.New(log, &prompter{in: in, out: out})
+	//cache := streamcache.New(log, in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
 	for i := range rdrs {
@@ -106,4 +132,20 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	case <-cache.Done():
 		return cache.Err()
 	}
+}
+
+var _ io.Reader = (*prompter)(nil)
+
+// prompter is an io.Reader that writes a prompt to out before
+// reading from in.
+type prompter struct {
+	in  io.Reader
+	out io.Writer
+}
+
+// Read implements io.Reader. It renders a prompt to out before
+// reading from in.
+func (pr *prompter) Read(p []byte) (n int, err error) {
+	fmt.Fprint(pr.out, "> ")
+	return pr.in.Read(p)
 }
