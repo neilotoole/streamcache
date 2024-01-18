@@ -37,6 +37,7 @@ func TestCache(t *testing.T) {
 	}
 	require.Equal(t, 0, cache.Size())
 	require.Nil(t, cache.Err())
+	require.Equal(t, -1, cache.ErrAt())
 
 	r, err := cache.NewReader(ctx)
 	require.NoError(t, err)
@@ -86,6 +87,7 @@ func TestCache(t *testing.T) {
 	require.Equal(t, io.EOF, cache.Err())
 	require.Equal(t, 8, r.offset)
 	require.Equal(t, 8, cache.Size())
+	require.Equal(t, 8, cache.ErrAt())
 	require.False(t, isDone(cache))
 
 	// Read one more time, and we should get io.EOF again.
@@ -96,6 +98,7 @@ func TestCache(t *testing.T) {
 	require.Equal(t, io.EOF, cache.Err())
 	require.Equal(t, 8, r.offset)
 	require.Equal(t, 8, cache.Size())
+	require.Equal(t, 8, cache.ErrAt())
 	require.False(t, isDone(cache))
 
 	// Close the reader, which should close the underlying source.

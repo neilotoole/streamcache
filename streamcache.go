@@ -101,6 +101,9 @@ type Cache struct {
 	readErr error
 
 	// readErrAt is the offset at which readErr occurred.
+	// REVISIT: is it not the case that readErrAt is always
+	// equal to size if readErr is non-nil? Maybe we can
+	// get rid of this field?
 	readErrAt int
 
 	// size is the count of bytes read from src.
@@ -117,12 +120,13 @@ type Cache struct {
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		cMu:    &sync.RWMutex{},
-		srcMuQ: muqu.New(),
-		log:    log,
-		src:    src,
-		cache:  make([]byte, 0),
-		done:   make(chan struct{}),
+		cMu:       &sync.RWMutex{},
+		srcMuQ:    muqu.New(),
+		log:       log,
+		src:       src,
+		cache:     make([]byte, 0),
+		done:      make(chan struct{}),
+		readErrAt: -1,
 	}
 
 	return c
@@ -162,72 +166,15 @@ var (
 // src returns an error.
 func (c *Cache) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	n, err = c.src.Read(p)
-
 	c.cMu.Lock()
 	defer c.cMu.Unlock()
 	c.size += n
-	c.readErr = err
-	return n, c.readErr
-}
 
-func (c *Cache) readLock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "read lock: before")
-	c.cMu.RLock()
-	c.Infof(r, log, slog.LevelDebug, "read lock: after")
-}
-
-func (c *Cache) readUnlock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "read unlock: before")
-	c.cMu.RUnlock()
-	c.Infof(r, log, slog.LevelDebug, "read unlock: after")
-}
-
-func (c *Cache) tryReadLock(r *Reader, log *slog.Logger) bool {
-	c.Infof(r, log, slog.LevelDebug, "try read lock: before")
-	ok := c.cMu.TryRLock()
-	c.Infof(r, log, slog.LevelDebug, "try read lock: after: %v", ok)
-	return ok
-}
-
-func (c *Cache) writeLock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "write lock: before")
-	c.cMu.Lock()
-	c.Infof(r, log, slog.LevelDebug, "write lock: after")
-}
-
-func (c *Cache) tryWriteLock(r *Reader, log *slog.Logger) bool { //nolint:unused
-	c.Infof(r, log, slog.LevelDebug, "try write lock: before")
-	ok := c.cMu.TryLock()
-	c.Infof(r, log, slog.LevelDebug, "try write lock: after: %v", ok)
-	return ok
-}
-
-func (c *Cache) writeUnlock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "write unlock: before")
-	c.cMu.Unlock()
-	c.Infof(r, log, slog.LevelDebug, "write unlock: after")
-}
-
-// https://www.reddit.com/r/golang/comments/m9b0yp/fastest_way_to_pick_uniformly_from_a_slice_from/
-
-func (c *Cache) srcLock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "src lock: before")
-	c.srcMuQ.Lock()
-	c.Infof(r, log, slog.LevelDebug, "src lock: after")
-}
-
-func (c *Cache) trySrcLock(r *Reader, log *slog.Logger) bool {
-	c.Infof(r, log, slog.LevelDebug, "try src lock: before")
-	ok := c.srcMuQ.TryLock()
-	// ok := c.srcMu.TryLock()
-	c.Infof(r, log, slog.LevelDebug, "try src lock: after: %v", ok)
-	return ok
-}
-
-func (c *Cache) srcUnlock(r *Reader, log *slog.Logger) {
-	c.Infof(r, log, slog.LevelDebug, "src unlock: before")
-	c.srcMuQ.Unlock()
-	c.Infof(r, log, slog.LevelDebug, "src unlock: after")
+	if err != nil {
+		c.readErr = err
+		c.readErrAt = c.size
+	}
+	return n, err
 }
 
 // readMain reads from Cache.cache and/or Cache.src. If Cache is sealed
@@ -236,7 +183,7 @@ func (c *Cache) srcUnlock(r *Reader, log *slog.Logger) {
 // directly against src, bypassing Cache.cache entirely.
 func (c *Cache) readMain(r *Reader, p []byte, offset int) (n int, err error) {
 	log := c.getLog(r)
-TOP: // FIXME: do we still need TOP
+TOP:
 	c.readLock(r, log)
 
 	if len(c.rdrs) == 1 {
@@ -268,7 +215,7 @@ TOP: // FIXME: do we still need TOP
 	c.readUnlock(r, log)
 
 	// And try to get the src lock.
-	if !c.trySrcLock(r, log) {
+	if !c.srcTryLock(r, log) {
 		// We couldn't get the src lock. Another reader has the src lock,
 		// and could be blocked on io. But, in the time since we released
 		// the read lock above, it's possible that more data was added to
@@ -276,7 +223,7 @@ TOP: // FIXME: do we still need TOP
 		// so that r can catch up to the current cache state while some other
 		// reader holds src lock.
 
-		if !c.tryReadLock(r, log) {
+		if !c.readTryLock(r, log) {
 			// We couldn't get the read lock, because another reader
 			// is updating the cache after having read from src, and thus
 			// has the write lock. There's only a tiny window where the
@@ -320,8 +267,6 @@ TOP: // FIXME: do we still need TOP
 	if c.size > offset {
 		// There's some new stuff in the cache. Return it.
 		n, err = c.fillFromCache(p, offset)
-
-		// c.readUnlock(log)
 		c.srcUnlock(r, log)
 		return n, err
 	}
@@ -341,7 +286,6 @@ TOP: // FIXME: do we still need TOP
 	}
 
 	// OK, this time, we're REALLY going to read from src.
-
 	c.Infof(r, log, slog.LevelInfo, "Entering src.Read")
 	n, err = c.src.Read(p)
 	c.Infof(r, log, slog.LevelInfo, "Returned from src.Read: n=%d, err=%v", n, err)
@@ -354,7 +298,6 @@ TOP: // FIXME: do we still need TOP
 	}
 
 	// Now we need to update the cache, so we need to get the write lock.
-	// fmt.Printf("waiting for write lock with [%d] bytes to return: %s\n", n, r.Name)
 	c.writeLock(r, log)
 	if err != nil {
 		c.readErr = err
@@ -378,7 +321,7 @@ TOP: // FIXME: do we still need TOP
 // reached the value of readErrAt, readErr is returned.
 func (c *Cache) fillFromCache(p []byte, offset int) (n int, err error) {
 	n = copy(p, c.cache[offset:])
-	if c.readErr != nil && n+offset >= c.readErrAt {
+	if c.readErr != nil && c.readErrAt > -1 && n+offset >= c.readErrAt {
 		err = c.readErr
 	}
 	return n, err
@@ -504,6 +447,18 @@ func (c *Cache) Err() error {
 	return c.readErr
 }
 
+// ErrAt returns the byte offset at which the first error (if any) was
+// returned by the underlying source reader. If no error has been
+// received (Cache.Err returns nil), -1 is returned.
+func (c *Cache) ErrAt() int {
+	c.cMu.RLock()
+	defer c.cMu.RUnlock()
+	if c.readErr == nil {
+		return -1
+	}
+	return c.size
+}
+
 // close is invoked by Reader.Close to close itself. If the Cache
 // is sealed and r is the final unclosed reader, this method closes
 // the src reader, if it implements io.Closer.
@@ -554,6 +509,64 @@ func (c *Cache) Sealed() bool {
 	c.cMu.RLock()
 	defer c.cMu.RUnlock()
 	return c.sealed
+}
+
+func (c *Cache) readLock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "read lock: before")
+	c.cMu.RLock()
+	c.Infof(r, log, slog.LevelDebug, "read lock: after")
+}
+
+func (c *Cache) readUnlock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "read unlock: before")
+	c.cMu.RUnlock()
+	c.Infof(r, log, slog.LevelDebug, "read unlock: after")
+}
+
+func (c *Cache) readTryLock(r *Reader, log *slog.Logger) bool {
+	c.Infof(r, log, slog.LevelDebug, "try read lock: before")
+	ok := c.cMu.TryRLock()
+	c.Infof(r, log, slog.LevelDebug, "try read lock: after: %v", ok)
+	return ok
+}
+
+func (c *Cache) writeLock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "write lock: before")
+	c.cMu.Lock()
+	c.Infof(r, log, slog.LevelDebug, "write lock: after")
+}
+
+func (c *Cache) writeTryLock(r *Reader, log *slog.Logger) bool { //nolint:unused
+	c.Infof(r, log, slog.LevelDebug, "try write lock: before")
+	ok := c.cMu.TryLock()
+	c.Infof(r, log, slog.LevelDebug, "try write lock: after: %v", ok)
+	return ok
+}
+
+func (c *Cache) writeUnlock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "write unlock: before")
+	c.cMu.Unlock()
+	c.Infof(r, log, slog.LevelDebug, "write unlock: after")
+}
+
+func (c *Cache) srcLock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "src lock: before")
+	c.srcMuQ.Lock()
+	c.Infof(r, log, slog.LevelDebug, "src lock: after")
+}
+
+func (c *Cache) srcTryLock(r *Reader, log *slog.Logger) bool {
+	c.Infof(r, log, slog.LevelDebug, "try src lock: before")
+	ok := c.srcMuQ.TryLock()
+	// ok := c.srcMu.TryLock()
+	c.Infof(r, log, slog.LevelDebug, "try src lock: after: %v", ok)
+	return ok
+}
+
+func (c *Cache) srcUnlock(r *Reader, log *slog.Logger) {
+	c.Infof(r, log, slog.LevelDebug, "src unlock: before")
+	c.srcMuQ.Unlock()
+	c.Infof(r, log, slog.LevelDebug, "src unlock: after")
 }
 
 var _ io.ReadCloser = (*Reader)(nil)
