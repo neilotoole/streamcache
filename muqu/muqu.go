@@ -9,7 +9,7 @@
 // normal and starvation. Starvation mode kicks in when a waiter
 // fails to acquire the mutex for more than 1ms. However, for
 // some purposes waiting 1ms simply doesn't work, and FIFO
-// fairness is required. This is where muqu.Mutex comes in.
+// fairness is required, hence the need for this package.
 package muqu
 
 import (
@@ -25,11 +25,14 @@ type Mutex struct {
 	// A successful take from this channel acquires the lock.
 	lockCh chan struct{}
 
-	// reqQ is the queue of requests waiting for the lock.
+	// reqQ is the FIFO queue of requests waiting for the lock.
 	// The Queue impl is safe for concurrent use.
 	reqQ *Queue[request]
 
 	// reqPool caches request instances for reuse.
+	// For some applications, it may be normal for the Mutex to
+	// be locked and unlocked millions of times, so we want to
+	// avoid allocating millions of request instances.
 	reqPool sync.Pool
 }
 
@@ -50,8 +53,7 @@ func New() *Mutex {
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
-	// Create a new request and enqueue it.
-	req := m.newRequest()
+	req := m.reqPool.Get().(request)
 	m.reqQ.Enqueue(req)
 
 	for {
@@ -115,17 +117,7 @@ func (m *Mutex) Unlock() {
 	}
 }
 
+// request is a request for the lock. It is signalled
+// via req<-struct{}{} in Mutex.Lock when the lock is
+// available to the request.
 type request chan struct{}
-
-// newRequest returns a request from the pool, or creates a new one.
-func (m *Mutex) newRequest() request {
-	if req, ok := m.reqPool.Get().(request); ok && req != nil {
-		return req
-	}
-
-	// Because we construct the sync.Pool with a New func, this
-	// should be unreachable?
-	req := make(chan struct{}, 1)
-	m.reqPool.Put(req)
-	return req
-}

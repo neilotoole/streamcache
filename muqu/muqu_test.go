@@ -1,15 +1,16 @@
-package muqu
+package muqu_test
 
 import (
 	"fmt"
+	"github.com/neilotoole/streamcache/muqu"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 )
 
-var _ sync.Locker = (*Mutex)(nil)
+var _ sync.Locker = (*muqu.Mutex)(nil)
 var _ sync.Locker = (*sync.Mutex)(nil)
-
 
 func sleepy() {
 	//time.Sleep(time.Second * 1)
@@ -20,7 +21,7 @@ const iterations = 10
 const alice, bob, carol, dave = "alice", "bob", "carol", "dave"
 
 func TestLockQueue2(t *testing.T) {
-	mu := New()
+	mu := muqu.New()
 	t.Logf("About to acquire")
 
 	wg := &sync.WaitGroup{}
@@ -63,51 +64,44 @@ func TestLockQueue2(t *testing.T) {
 	t.Logf("Done waiting")
 }
 
-//
-//func TestQ_TryLock1(t *testing.T) {
-//	q := muqu.New()
-//
-//	ul1, ok := q.TryLock(alice)
-//	require.True(t, ok)
-//	require.NotNil(t, ul1)
-//
-//	ul2, ok := q.TryLock(bob)
-//	require.False(t, ok)
-//	require.Nil(t, ul2)
-//
-//	go q.Lock(carol)
-//	go q.Lock(dave)
-//
-//	time.Sleep(time.Second)
-//	ul2, ok = q.TryLock(bob)
-//	require.False(t, ok)
-//	require.Nil(t, ul2)
-//}
-//
-//func TestQ_TryLock2(t *testing.T) {
-//	q := muqu.New()
-//
-//	ul1, ok := q.TryLock(alice)
-//	require.True(t, ok)
-//	require.NotNil(t, ul1)
-//
-//	ul2, ok := q.TryLock(bob)
-//	require.False(t, ok)
-//	require.Nil(t, ul2)
-//
-//	go func() {
-//		ul := q.Lock(carol)
-//		defer ul()
-//		t.Logf("carol working")
-//	}()
-//	go func() {
-//		ul := q.Lock(dave)
-//		defer ul()
-//		t.Logf("dave working")
-//	}()
-//
-//	time.Sleep(time.Second)
-//	ul2, ok = q.TryLock(bob)
-//	require.False(t, ok)
-//	require.Nil(t, ul2)
-//}
+// Copied from sync/mutex_test.go.
+func TestMutex(t *testing.T) {
+	if n := runtime.SetMutexProfileFraction(1); n != 0 {
+		t.Logf("got mutexrate %d expected 0", n)
+	}
+	defer runtime.SetMutexProfileFraction(0)
+
+	m := muqu.New()
+	m.Lock()
+	if m.TryLock() {
+		t.Fatalf("TryLock succeeded with mutex locked")
+	}
+	m.Unlock()
+	if !m.TryLock() {
+		t.Fatalf("TryLock failed with mutex unlocked")
+	}
+	m.Unlock()
+
+	c := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go HammerMutex(m, 1000, c)
+	}
+	for i := 0; i < 10; i++ {
+		<-c
+	}
+}
+
+// HammerMutex is copied from sync/mutex_test.go.
+func HammerMutex(m *muqu.Mutex, loops int, cdone chan bool) {
+	for i := 0; i < loops; i++ {
+		if i%3 == 0 {
+			if m.TryLock() {
+				m.Unlock()
+			}
+			continue
+		}
+		m.Lock()
+		m.Unlock()
+	}
+	cdone <- true
+}
