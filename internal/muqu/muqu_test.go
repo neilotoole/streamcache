@@ -2,35 +2,40 @@ package muqu_test
 
 import (
 	"fmt"
-	"github.com/neilotoole/streamcache/muqu"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/neilotoole/streamcache/internal/muqu"
 )
 
-var _ sync.Locker = (*muqu.Mutex)(nil)
-var _ sync.Locker = (*sync.Mutex)(nil)
+var (
+	_ sync.Locker = (*muqu.Mutex)(nil)
+	_ sync.Locker = (*sync.Mutex)(nil)
+)
 
 func sleepy() {
-	//time.Sleep(time.Second * 1)
+	// time.Sleep(time.Second * 1)
 	time.Sleep(time.Millisecond * 2)
 }
 
-const iterations = 10
-const alice, bob, carol, dave = "alice", "bob", "carol", "dave"
+const (
+	iterations              = 10
+	alice, bob, carol, dave = "alice", "bob", "carol", "dave"
+)
 
 func TestLockQueue2(t *testing.T) {
 	mu := muqu.New()
 	t.Logf("About to acquire")
 
 	wg := &sync.WaitGroup{}
-	//wg.Add(2)
+	// wg.Add(2)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 
-		//t.Logf("1: Acquiring")
+		// t.Logf("1: Acquiring")
 
 		for i := 0; i < iterations; i++ {
 			sleepy()
@@ -40,9 +45,8 @@ func TestLockQueue2(t *testing.T) {
 			sleepy()
 			fmt.Println("Alice releasing")
 			mu.Unlock()
-			//sleepy()
+			// sleepy()
 		}
-
 	}()
 
 	go func() {
@@ -55,7 +59,7 @@ func TestLockQueue2(t *testing.T) {
 			sleepy()
 			fmt.Println("Bob releasing")
 			mu.Unlock()
-			//sleepy()
+			// sleepy()
 		}
 	}()
 

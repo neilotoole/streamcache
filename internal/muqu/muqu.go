@@ -39,12 +39,15 @@ type Mutex struct {
 // New returns a new Mutex ready for use.
 func New() *Mutex {
 	m := &Mutex{
+		lockCh: make(chan struct{}, 1),
+		reqQ:   &Queue[request]{},
 		reqPool: sync.Pool{New: func() interface{} {
 			return request(make(chan struct{}, 1))
 		}},
-		lockCh: make(chan struct{}, 1),
-		reqQ:   &Queue[request]{},
 	}
+
+	// Initial send on lockCh because a new mutex
+	// needs to start life unlocked.
 	m.lockCh <- struct{}{}
 	return m
 }

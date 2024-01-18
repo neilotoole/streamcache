@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/neilotoole/sq/libsq/core/lg/devlog"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+
+	"github.com/neilotoole/sq/libsq/core/lg/devlog"
 
 	"github.com/neilotoole/streamcache"
 )
@@ -32,7 +33,7 @@ func getLogFile() (*os.File, error) {
 		return nil, err
 	}
 	name := filepath.Join(home, "multicaser.log")
-	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
 }
 
 func main() {
@@ -79,7 +80,7 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	transforms := []func(string) string{upper, lower, regular}
 
 	cache := streamcache.New(log, &prompter{in: in, out: out})
-	//cache := streamcache.New(log, in)
+	// cache := streamcache.New(log, in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
 	for i := range rdrs {

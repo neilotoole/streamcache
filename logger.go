@@ -2,11 +2,12 @@ package streamcache
 
 import (
 	"fmt"
-	"github.com/neilotoole/sq/libsq/core/lg"
 	"log/slog"
 	"path/filepath"
 	"runtime"
 	"strconv"
+
+	"github.com/neilotoole/sq/libsq/core/lg"
 )
 
 func (c *Cache) getLog(r *Reader) *slog.Logger {
@@ -14,7 +15,6 @@ func (c *Cache) getLog(r *Reader) *slog.Logger {
 		return lg.Discard()
 	}
 	return c.log.With("rdr", r.Name)
-
 }
 
 //func (c *Cache) Infof(l *slog.Logger, lvl slog.Level, format string, args ...any) {
@@ -44,8 +44,8 @@ func (c *Cache) Infof(r *Reader, l *slog.Logger, lvl slog.Level, format string, 
 	if f.File == "" {
 		return
 	}
-	//dir, file := filepath.Split(f.File)
-	//fn := f.Function
+	// dir, file := filepath.Split(f.File)
+	// fn := f.Function
 
 	//parts := strings.Split(f.Function, "/")
 	//if len(parts) > 0 {
@@ -64,7 +64,7 @@ func (c *Cache) Infof(r *Reader, l *slog.Logger, lvl slog.Level, format string, 
 	s := filepath.Base(f.File) + ":" + strconv.Itoa(f.Line) +
 		"   " + color + fmt.Sprintf("%13s", r.Name) + ansiReset +
 		"    " + fmt.Sprintf(format, args...)
-	//println(s)
+	// println(s)
 	_ = s
-	//fmt.Fprintln(os.Stdout, s)
+	// fmt.Fprintln(os.Stdout, s)
 }
