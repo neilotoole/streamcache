@@ -68,16 +68,27 @@ type Cache struct {
 	// REVISIT: Why a pointer and not a value?
 	cMu *sync.RWMutex
 
-	// srcMu guards concurrent access to reading from src.
-	//srcMu sync.Mutex
-
-	srcMuQ *muqu.Mutex
+	// srcMu guards concurrent access to reading from src. Note that it
+	// is not an instance of sync.Mutex, but instead muqu.Mutex, which
+	// is a mutex that uses a FIFO queue to ensure fairness. This is
+	// important in Cache.readMain because, as implemented, a reader
+	// could get the src lock on repeated calls, starving the other
+	// readers, which is a big problem if that greedy reader blocks
+	// on reading from src. Most likely our use of locks could be
+	// improved to avoid this scenario, but that's where we're at today.
+	srcMu *muqu.Mutex
 
 	logMu sync.Mutex // FIXME: delete
 
-	// Because cMu is a read-write mutex and srcMu is a regular mutex,
-	// there are effectively three locks that can be acquired. They
-	// are referred to in the comments as read, write, and src locks.
+	// Given our two mutexes cMu and srcMu, there are effectively three
+	// locks that can be acquired.
+	//
+	//  - cMu's read lock
+	//  - cMu's write lock
+	//  - srcMu's lock
+	//
+	// These three locks are referred to in the comments as the read, write,
+	// and src locks.
 
 	// src is the underlying reader from which bytes are read.
 	src io.Reader
@@ -100,12 +111,6 @@ type Cache struct {
 	// src is never read from again.
 	readErr error
 
-	// readErrAt is the offset at which readErr occurred.
-	// REVISIT: is it not the case that readErrAt is always
-	// equal to size if readErr is non-nil? Maybe we can
-	// get rid of this field?
-	readErrAt int
-
 	// size is the count of bytes read from src.
 	size int
 
@@ -120,13 +125,12 @@ type Cache struct {
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		cMu:       &sync.RWMutex{},
-		srcMuQ:    muqu.New(),
-		log:       log,
-		src:       src,
-		cache:     make([]byte, 0),
-		done:      make(chan struct{}),
-		readErrAt: -1,
+		cMu:   &sync.RWMutex{},
+		srcMu: muqu.New(),
+		log:   log,
+		src:   src,
+		cache: make([]byte, 0),
+		done:  make(chan struct{}),
 	}
 
 	return c
@@ -166,14 +170,12 @@ var (
 // src returns an error.
 func (c *Cache) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	n, err = c.src.Read(p)
+
+	// Get the write lock before updating c's fields.
 	c.cMu.Lock()
 	defer c.cMu.Unlock()
 	c.size += n
-
-	if err != nil {
-		c.readErr = err
-		c.readErrAt = c.size
-	}
+	c.readErr = err
 	return n, err
 }
 
@@ -299,10 +301,7 @@ TOP:
 
 	// Now we need to update the cache, so we need to get the write lock.
 	c.writeLock(r, log)
-	if err != nil {
-		c.readErr = err
-		c.readErrAt = offset + n
-	}
+	c.readErr = err
 	if n > 0 {
 		c.size += n
 		c.cache = append(c.cache, p[:n]...)
@@ -321,7 +320,7 @@ TOP:
 // reached the value of readErrAt, readErr is returned.
 func (c *Cache) fillFromCache(p []byte, offset int) (n int, err error) {
 	n = copy(p, c.cache[offset:])
-	if c.readErr != nil && c.readErrAt > -1 && n+offset >= c.readErrAt {
+	if c.readErr != nil && n+offset >= c.size {
 		err = c.readErr
 	}
 	return n, err
@@ -373,10 +372,7 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		// Because we're updating c's fields, we need to get write lock.
 		c.writeLock(r, log)
 		c.size += n
-		if err != nil {
-			c.readErr = err
-			c.readErrAt = offset + n
-		}
+		c.readErr = err
 		c.writeUnlock(r, log)
 		return n, err
 	case offset > c.size:
@@ -404,11 +400,8 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	// Because we're updating c's fields, we need to get write lock.
 	c.writeLock(r, c.getLog(r))
 	c.size += n2
+	c.readErr = err
 	n += n2
-	if err != nil {
-		c.readErr = err
-		c.readErrAt = offset + n // REVISIT: is this correct?
-	}
 	c.writeUnlock(r, c.getLog(r))
 	// Any subsequent reads will be direct from src.
 	r.readFn = c.readSrcDirect
@@ -416,17 +409,28 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 }
 
 // Done returns a channel that is closed when the Cache is finished. This
-// channel can be used to wait for work to complete. A Cache is considered
-// finished after Seal has been invoked on it, and there are zero unclosed
-// Reader instances remaining.
+// channel can be used to wait for work to complete.
 //
-// Note that it's possible that a finished Cache has not closed its underlying
-// source reader. For example, if a Cache is created and immediately sealed,
-// the Cache is finished, but the underlying source reader was never closed.
-// The source reader is closed only by closing the last Reader instance that
-// was active after Seal was invoked.
+//	select {
+//	case <-c.Done():
+//		return c.Err()
+//	default:
+//		fmt.Println("The cache is still in use")
+//	}
+//
+// A Cache is considered finished after Seal has been invoked on it, and there
+// are zero unclosed Reader instances remaining.Note that Cache.Err returning a
+// non-nil value does not of itself indicate that the Cache is finished. There
+// could be other readers still consuming earlier parts of the cache.
+//
+// Note also that it's possible that a finished Cache has not closed its
+// underlying source reader. For example, if a Cache is created and immediately
+// sealed, the Cache is finished, but the underlying source reader was never
+// closed. The source reader is closed only by closing the last Reader instance
+// that was active after Seal was invoked.
 func (c *Cache) Done() <-chan struct{} {
 	return c.done
+
 }
 
 // Size returns the number of bytes read from the underlying reader.
@@ -448,8 +452,8 @@ func (c *Cache) Err() error {
 }
 
 // ErrAt returns the byte offset at which the first error (if any) was
-// returned by the underlying source reader. If no error has been
-// received (Cache.Err returns nil), -1 is returned.
+// returned by the underlying source reader, or -1. Thus, if Cache.Err
+// is non-nil, ErrAt will be >= 0 and equal to Cache.Size.
 func (c *Cache) ErrAt() int {
 	c.cMu.RLock()
 	defer c.cMu.RUnlock()
@@ -551,13 +555,13 @@ func (c *Cache) writeUnlock(r *Reader, log *slog.Logger) {
 
 func (c *Cache) srcLock(r *Reader, log *slog.Logger) {
 	c.Infof(r, log, slog.LevelDebug, "src lock: before")
-	c.srcMuQ.Lock()
+	c.srcMu.Lock()
 	c.Infof(r, log, slog.LevelDebug, "src lock: after")
 }
 
 func (c *Cache) srcTryLock(r *Reader, log *slog.Logger) bool {
 	c.Infof(r, log, slog.LevelDebug, "try src lock: before")
-	ok := c.srcMuQ.TryLock()
+	ok := c.srcMu.TryLock()
 	// ok := c.srcMu.TryLock()
 	c.Infof(r, log, slog.LevelDebug, "try src lock: after: %v", ok)
 	return ok
@@ -565,7 +569,7 @@ func (c *Cache) srcTryLock(r *Reader, log *slog.Logger) bool {
 
 func (c *Cache) srcUnlock(r *Reader, log *slog.Logger) {
 	c.Infof(r, log, slog.LevelDebug, "src unlock: before")
-	c.srcMuQ.Unlock()
+	c.srcMu.Unlock()
 	c.Infof(r, log, slog.LevelDebug, "src unlock: after")
 }
 
