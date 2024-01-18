@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+var _ sync.Locker = (*Mutex)(nil)
+var _ sync.Locker = (*sync.Mutex)(nil)
+
+
 func sleepy() {
 	//time.Sleep(time.Second * 1)
 	time.Sleep(time.Millisecond * 2)
