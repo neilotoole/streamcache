@@ -22,9 +22,11 @@ import (
 // Mutex implements the same methodset as sync.Mutex, so it can
 // be used as a drop-in replacement.
 type Mutex struct {
-	// initOnce is required for lazy initialization, so that
-	// the zero value of Mutex is usable, like sync.Mutex.
-	initOnce sync.Once
+	// reqPool caches request instances for reuse.
+	// For some applications, it may be normal for the Mutex to
+	// be locked and unlocked millions of times, so we want to
+	// avoid allocating millions of request instances.
+	reqPool sync.Pool
 
 	// lockCh indicates whether the lock is held.
 	// A successful take from this channel acquires the lock.
@@ -34,11 +36,9 @@ type Mutex struct {
 	// The queue impl is safe for concurrent use.
 	reqQ *queue[request]
 
-	// reqPool caches request instances for reuse.
-	// For some applications, it may be normal for the Mutex to
-	// be locked and unlocked millions of times, so we want to
-	// avoid allocating millions of request instances.
-	reqPool sync.Pool
+	// initOnce is required for lazy initialization, so that
+	// the zero value of Mutex is usable, like sync.Mutex.
+	initOnce sync.Once
 }
 
 // init exists so that the zero value of Mutex is usable, like sync.Mutex.

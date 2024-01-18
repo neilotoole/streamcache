@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"math/rand"
 	"os"
@@ -455,10 +456,10 @@ var _ io.Reader = (*rcRecorder)(nil)
 
 // rcRecorder wraps an io.Reader and records stats.
 type rcRecorder struct {
-	mu         sync.Mutex
 	r          io.Reader
 	closeCount int
 	size       int
+	mu         sync.Mutex
 }
 
 func (rc *rcRecorder) Read(p []byte) (n int, err error) {
@@ -495,4 +496,34 @@ func isDone(cache *Cache) bool {
 	default:
 		return false
 	}
+}
+
+func TestSema(t *testing.T) {
+	ctx := context.Background()
+	sema := semaphore.NewWeighted(2)
+	t.Log("got it")
+	num := 10
+
+	wait := make(chan struct{})
+
+	for i := 0; i < num; i++ {
+		go func(i int) {
+			t.Logf("Acquiring: %d", i)
+			sema.Acquire(ctx, 1)
+			t.Logf("ACQUIRED!: %d", i)
+		}(i)
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	//t.Logf("waiting for %d", 10)
+	time.Sleep(time.Second)
+	//t.Log("got it again")
+
+	for i := 0; i < 5; i++ {
+		sema.Release(1)
+		t.Logf("Released: %d", i)
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	<-wait
 }

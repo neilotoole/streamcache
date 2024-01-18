@@ -64,6 +64,14 @@ var ErrAlreadyClosed = errors.New("reader is already closed")
 // final reader discards the cache and reads directly from source for
 // the remaining bytes.
 type Cache struct {
+	// src is the underlying reader from which bytes are read.
+	src io.Reader
+
+	// readErr is the first (and only) error returned by src's
+	// Read method. Once readErr has been set to a non-nil value,
+	// src is never read from again.
+	readErr error
+
 	// cMu guards concurrent access to Cache's fields and methods.
 	// REVISIT: Why a pointer and not a value?
 	cMu *sync.RWMutex
@@ -79,10 +87,8 @@ type Cache struct {
 	// srcMu *fifomu.Mutex
 	srcMu *fifomu.Mutex
 
-	logMu sync.Mutex // FIXME: delete
-
-	// Given our two mutexes cMu and srcMu, there are effectively three
-	// locks that can be acquired.
+	// Consider our two mutexes cMu and srcMu ^^ above. There are effectively
+	// three locks that can be acquired.
 	//
 	//  - cMu's read lock
 	//  - cMu's write lock
@@ -91,35 +97,29 @@ type Cache struct {
 	// These three locks are referred to in the comments as the read, write,
 	// and src locks.
 
-	// src is the underlying reader from which bytes are read.
-	src io.Reader
+	// done is closed after the Cache is sealed and the last
+	// reader is closed. See Cache.Done.
+	done chan struct{}
+
+	log *slog.Logger
 
 	// rdrs is the set of unclosed Reader instances created
 	// by Cache.NewReader. When a Reader is closed, it is removed
 	// from this slice.
 	rdrs []*Reader
 
-	// sealed is set to true when Seal is called. When sealed is true,
-	// no more calls to NewReader are allowed.
-	sealed bool
-
-	// done is closed after the Cache is sealed and the last
-	// reader is closed. See Cache.Done.
-	done chan struct{}
-
-	// readErr is the first (and only) error returned by src's
-	// Read method. Once readErr has been set to a non-nil value,
-	// src is never read from again.
-	readErr error
-
-	// size is the count of bytes read from src.
-	size int
-
 	// cache holds the accumulated bytes read from src.
 	// It is nilled when the final reader switches to readSrcDirect.
 	cache []byte
 
-	log *slog.Logger
+	// size is the count of bytes read from src.
+	size int
+
+	logMu sync.Mutex // FIXME: delete
+
+	// sealed is set to true when Seal is called. When sealed is true,
+	// no more calls to NewReader are allowed.
+	sealed bool
 }
 
 // New returns a new Cache that reads from src. Use Cache.NewReader
@@ -576,15 +576,16 @@ var _ io.ReadCloser = (*Reader)(nil)
 // Reader is returned by Cache.NewReader. It is the responsibility of the
 // caller to close Reader.
 type Reader struct {
-	Name string // FIXME: delete when done with development
-
-	// mu guards Reader's methods.
-	mu sync.Mutex
-
 	// ctx is the context provided to Cache.NewReader. If non-nil,
 	// every invocation of Reader.Read checks ctx for cancellation
 	// before proceeding. Note that Reader.Close ignores ctx.
 	ctx context.Context
+
+	// readErr is set by Reader.Read when an error is returned
+	// from the source, and its non-nil value is returned by
+	// subsequent calls to Read. That is to say: the same non-nil
+	// read error is returned every time.
+	readErr error
 
 	// c is the Reader's parent Cache.
 	c *Cache
@@ -595,19 +596,17 @@ type Reader struct {
 	// to Cache.readSrcDirect.
 	readFn readFunc
 
+	// pCloseErr is set by Reader.Close, and the set value is
+	// returned by any subsequent calls to Close.
+	pCloseErr *error
+	Name      string // FIXME: delete when done with development
+
 	// offset is the offset into the stream from which the next
 	// Read will read. It is incremented by each Read.
 	offset int
 
-	// readErr is set by Reader.Read when an error is returned
-	// from the source, and its non-nil value is returned by
-	// subsequent calls to Read. That is to say: the same non-nil
-	// read error is returned every time.
-	readErr error
-
-	// pCloseErr is set by Reader.Close, and the set value is
-	// returned by any subsequent calls to Close.
-	pCloseErr *error
+	// mu guards Reader's methods.
+	mu sync.Mutex
 }
 
 // Read implements io.Reader. If the non-nil context provided to Cache.NewReader

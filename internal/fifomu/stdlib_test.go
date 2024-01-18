@@ -7,6 +7,8 @@
 package fifomu
 
 import (
+	"github.com/neilotoole/streamcache/internal/semamu2"
+	"github.com/neilotoole/streamcache/internal/stdsemamu"
 	"runtime"
 	"sync"
 	"testing"
@@ -38,6 +40,13 @@ func newStdlibMu() mutexer {
 	return &sync.Mutex{}
 }
 
+func newStdSemaMu() mutexer {
+	return stdsemamu.New()
+}
+func newSemaMu2() mutexer {
+	return semamu2.New()
+}
+
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 	b.Cleanup(func() {
 		// Restore to default.
@@ -51,6 +60,16 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 	b.Run("stdlib", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newStdlibMu
+		fn(b)
+	})
+	b.Run("stdsemamu", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newStdSemaMu
+		fn(b)
+	})
+	b.Run("semamu2", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newSemaMu2
 		fn(b)
 	})
 }

@@ -69,7 +69,7 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	}
 
 	toTitle := func(s string) string {
-		return colorize(ansiBlue, strings.Title(s))
+		return colorize(ansiBlue, strings.Title(s)) //nolint:staticcheck
 	}
 
 	transforms := []func(string) string{toUpper, toLower, toTitle}

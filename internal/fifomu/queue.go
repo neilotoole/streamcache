@@ -7,8 +7,8 @@ import (
 // queue is a FIFO data structure. Each method has complexity O(1).
 // It is safe for concurrent use.
 type queue[T any] struct {
-	mu   sync.RWMutex
 	list *list[T]
+	mu   sync.RWMutex
 }
 
 // Enqueue adds an item at the back of the queue.
