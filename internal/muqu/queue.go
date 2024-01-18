@@ -4,20 +4,15 @@ import (
 	"sync"
 )
 
-// Queue is a FIFO data structure. Each method has complexity O(1).
+// queue is a FIFO data structure. Each method has complexity O(1).
 // It is safe for concurrent use.
-type Queue[T any] struct {
+type queue[T any] struct {
 	mu   sync.RWMutex
 	list *list[T]
 }
 
-// NewQueue returns a new Queue.
-func NewQueue[T any]() *Queue[T] {
-	return &Queue[T]{}
-}
-
-// Enqueue adds an item at the back of the Queue.
-func (q *Queue[T]) Enqueue(item T) {
+// Enqueue adds an item at the back of the queue.
+func (q *queue[T]) Enqueue(item T) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.list == nil {
@@ -27,8 +22,8 @@ func (q *Queue[T]) Enqueue(item T) {
 	q.list.PushFront(item)
 }
 
-// Dequeue removes the front item from the Queue.
-func (q *Queue[T]) Dequeue() (item T, ok bool) {
+// Dequeue removes the front item from the queue.
+func (q *queue[T]) Dequeue() (item T, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -46,7 +41,7 @@ func (q *Queue[T]) Dequeue() (item T, ok bool) {
 }
 
 // Head returns the front item without removing it.
-func (q *Queue[T]) Head() (item T, ok bool) {
+func (q *queue[T]) Head() (item T, ok bool) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -62,8 +57,8 @@ func (q *Queue[T]) Head() (item T, ok bool) {
 	return
 }
 
-// Size returns the size of the Queue.
-func (q *Queue[T]) Size() int {
+// Size returns the size of the queue.
+func (q *queue[T]) Size() int {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 

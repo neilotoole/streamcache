@@ -40,13 +40,20 @@ package streamcache
 import (
 	"context"
 	"errors"
+	"github.com/neilotoole/streamcache/internal/muqu"
 	"io"
 	"log/slog"
 	"runtime"
 	"sync"
-
-	"github.com/neilotoole/streamcache/internal/muqu"
 )
+
+var _ tryLocker = (*sync.Mutex)(nil)
+
+// tryLocker is the exported methodset of sync.Mutex.
+type tryLocker interface {
+	sync.Locker
+	TryLock() bool
+}
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
 // the source is already sealed.
@@ -76,7 +83,7 @@ type Cache struct {
 	// readers, which is a big problem if that greedy reader blocks
 	// on reading from src. Most likely our use of locks could be
 	// improved to avoid this scenario, but that's where we're at today.
-	srcMu *muqu.Mutex
+	srcMu tryLocker
 
 	logMu sync.Mutex // FIXME: delete
 

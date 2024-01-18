@@ -2,6 +2,7 @@ package muqu_test
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"runtime"
 	"sync"
 	"testing"
@@ -93,6 +94,27 @@ func TestMutex(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		<-c
 	}
+}
+
+func TestUnlockUnlocked(t *testing.T) {
+	require.Panics(t, func() {
+		mu := muqu.New()
+		mu.Unlock()
+	})
+
+	require.Panics(t, func() {
+		mu := muqu.New()
+		mu.Lock()
+		mu.Unlock()
+		mu.Unlock()
+	})
+}
+func TestUnlockUnlocked2(t *testing.T) {
+
+	//if (new+mutexLocked)&mutexLocked == 0 {
+	//	fatal("sync: unlock of unlocked mutex")
+	//}
+
 }
 
 // HammerMutex is copied from sync/mutex_test.go.

@@ -1,15 +1,15 @@
-// Package muqu provides a Mutex that uses a FIFO queue to
-// ensure fairness. Mutex implements sync.Locker, so it can
-// be used interchangeably with sync.Mutex. Performance is
-// significantly worse than sync.Mutex, so it should only be
-// used when fairness is required.
+//Package muqu provides a Mutex that uses a FIFO queue to
+//ensure fairness. Mutex implements sync.Locker, so it can
+//be used interchangeably with sync.Mutex. Performance is
+//significantly worse than sync.Mutex, so it should only be
+//used when fairness is required.
 //
-// Note that sync.Mutex's implementation discusses mutex
-// fairness, where the sync.Mutex can be in 2 modes of operations:
-// normal and starvation. Starvation mode kicks in when a waiter
-// fails to acquire the mutex for more than 1ms. However, for
-// some purposes waiting 1ms simply doesn't work, and FIFO
-// fairness is required, hence the need for this package.
+//Note that sync.Mutex's implementation discusses mutex
+//fairness, where the sync.Mutex can be in 2 modes of operations:
+//normal and starvation. Starvation mode kicks in when a waiter
+//fails to acquire the mutex for more than 1ms. However, for
+//some purposes waiting 1ms simply doesn't work, and FIFO
+//fairness is required, hence the need for this package.
 package muqu
 
 import (
@@ -26,8 +26,8 @@ type Mutex struct {
 	lockCh chan struct{}
 
 	// reqQ is the FIFO queue of requests waiting for the lock.
-	// The Queue impl is safe for concurrent use.
-	reqQ *Queue[request]
+	// The queue impl is safe for concurrent use.
+	reqQ *queue[request]
 
 	// reqPool caches request instances for reuse.
 	// For some applications, it may be normal for the Mutex to
@@ -38,24 +38,30 @@ type Mutex struct {
 
 // New returns a new Mutex ready for use.
 func New() *Mutex {
-	m := &Mutex{
-		lockCh: make(chan struct{}, 1),
-		reqQ:   &Queue[request]{},
-		reqPool: sync.Pool{New: func() interface{} {
-			return request(make(chan struct{}, 1))
-		}},
-	}
-
-	// Initial send on lockCh because a new mutex
-	// needs to start life unlocked.
-	m.lockCh <- struct{}{}
+	m := &Mutex{}
+	m.init()
 	return m
+}
+
+// init exists so that the zero value of Mutex is usable, like sync.Mutex.
+func (m *Mutex) init() {
+	if m.lockCh == nil {
+		m.lockCh = make(chan struct{}, 1)
+		m.reqQ = &queue[request]{}
+		m.reqPool = sync.Pool{New: func() interface{} {
+			return request(make(chan struct{}, 1))
+		}}
+		// Initial send on lockCh because a new mutex
+		// needs to start life unlocked.
+		m.lockCh <- struct{}{}
+	}
 }
 
 // Lock locks m.
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
+	m.init()
 	req := m.reqPool.Get().(request)
 	m.reqQ.Enqueue(req)
 
@@ -86,6 +92,7 @@ func (m *Mutex) Lock() {
 
 // TryLock tries to lock m and reports whether it succeeded.
 func (m *Mutex) TryLock() bool {
+	m.init()
 	select {
 	case <-m.lockCh:
 		// The lock is available.
@@ -112,11 +119,12 @@ func (m *Mutex) TryLock() bool {
 // It is allowed for one goroutine to lock a Mutex and then
 // arrange for another goroutine to unlock it.
 func (m *Mutex) Unlock() {
+	m.init()
 	select {
 	case m.lockCh <- struct{}{}:
 		// Successfully unlocked.
 	default:
-		panic("muqu: unlock of unlocked mutex")
+		panic("sync: unlock of unlocked mutex")
 	}
 }
 
