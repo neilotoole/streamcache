@@ -1,15 +1,15 @@
-//Package muqu provides a Mutex that uses a FIFO queue to
-//ensure fairness. Mutex implements sync.Locker, so it can
-//be used interchangeably with sync.Mutex. Performance is
-//significantly worse than sync.Mutex, so it should only be
-//used when fairness is required.
+// Package muqu provides a Mutex that uses a FIFO queue to
+// ensure fairness. Mutex implements sync.Locker, so it can
+// be used interchangeably with sync.Mutex. Performance is
+// significantly worse than sync.Mutex, so it should only be
+// used when fairness is required.
 //
-//Note that sync.Mutex's implementation discusses mutex
-//fairness, where the sync.Mutex can be in 2 modes of operations:
-//normal and starvation. Starvation mode kicks in when a waiter
-//fails to acquire the mutex for more than 1ms. However, for
-//some purposes waiting 1ms simply doesn't work, and FIFO
-//fairness is required, hence the need for this package.
+// Note that sync.Mutex's implementation discusses mutex
+// fairness, where the sync.Mutex can be in 2 modes of operations:
+// normal and starvation. Starvation mode kicks in when a waiter
+// fails to acquire the mutex for more than 1ms. However, for
+// some purposes waiting 1ms simply doesn't work, and FIFO
+// fairness is required, hence the need for this package.
 package muqu
 
 import (
@@ -18,8 +18,9 @@ import (
 
 // Mutex is a mutual exclusion lock whose Lock method uses a FIFO queue
 // to ensure fairness.
-// Use New to instantiate. Mutex implements sync.Locker, so it can
-// be used as a drop-in replacement for sync.Mutex.
+// The zero value for a Mutex is an unlocked mutex.
+// Mutex implements the same methodset as sync.Mutex, so it can
+// be used as a drop-in replacement.
 type Mutex struct {
 	// lockCh indicates whether the lock is held.
 	// A successful take from this channel acquires the lock.
@@ -34,13 +35,6 @@ type Mutex struct {
 	// be locked and unlocked millions of times, so we want to
 	// avoid allocating millions of request instances.
 	reqPool sync.Pool
-}
-
-// New returns a new Mutex ready for use.
-func New() *Mutex {
-	m := &Mutex{}
-	m.init()
-	return m
 }
 
 // init exists so that the zero value of Mutex is usable, like sync.Mutex.

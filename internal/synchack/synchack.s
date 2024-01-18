@@ -1,0 +1,9 @@
+// Copyright 2012 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// See https://sitano.github.io/2016/04/28/golang-private/
+// The runtime package uses //go:linkname to push a few functions into this
+// package but we still need a .s file so the Go tool does not pass -complete
+// to the go tool compile so the latter does not complain about Go functions
+// with no bodies.

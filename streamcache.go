@@ -40,20 +40,12 @@ package streamcache
 import (
 	"context"
 	"errors"
-	"github.com/neilotoole/streamcache/internal/muqu"
+	"github.com/neilotoole/streamcache/internal/synchack"
 	"io"
 	"log/slog"
 	"runtime"
 	"sync"
 )
-
-var _ tryLocker = (*sync.Mutex)(nil)
-
-// tryLocker is the exported methodset of sync.Mutex.
-type tryLocker interface {
-	sync.Locker
-	TryLock() bool
-}
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
 // the source is already sealed.
@@ -83,7 +75,8 @@ type Cache struct {
 	// readers, which is a big problem if that greedy reader blocks
 	// on reading from src. Most likely our use of locks could be
 	// improved to avoid this scenario, but that's where we're at today.
-	srcMu tryLocker
+	srcMu *synchack.Mutex
+	//srcMu *synchack.Mutex
 
 	logMu sync.Mutex // FIXME: delete
 
@@ -132,8 +125,9 @@ type Cache struct {
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		cMu:   &sync.RWMutex{},
-		srcMu: muqu.New(),
+		cMu: &sync.RWMutex{},
+		//srcMu: &muqu.Mutex{},
+		srcMu: &synchack.Mutex{},
 		log:   log,
 		src:   src,
 		cache: make([]byte, 0),
