@@ -69,12 +69,12 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	}
 
 	toTitle := func(s string) string {
-		return colorize(ansiBlue, strings.Title(s)) //nolint:deprecated
+		return colorize(ansiBlue, strings.Title(s))
 	}
 
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
-	//cache := streamcache.New(log, &prompter{in: in, out: out})
+	// cache := streamcache.New(log, &prompter{in: in, out: out})
 	cache := streamcache.New(log, in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
@@ -150,7 +150,7 @@ func (pr *prompter) Read(p []byte) (n int, err error) {
 	return pr.in.Read(p)
 }
 
-func colorize(ansi string, s string) string {
+func colorize(ansi, s string) string {
 	return ansi + s + ansiReset
 }
 

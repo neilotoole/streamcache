@@ -4,7 +4,7 @@
 
 // GOMAXPROCS=10 go test
 
-package muqu
+package fifomu
 
 import (
 	"runtime"
@@ -15,8 +15,10 @@ import (
 
 // The tests in this file are copied from stdlib sync/mutex_test.go.
 
-var _ mutexer = (*sync.Mutex)(nil)
-var _ mutexer = (*Mutex)(nil)
+var (
+	_ mutexer = (*sync.Mutex)(nil)
+	_ mutexer = (*Mutex)(nil)
+)
 
 // mutexer is the exported methodset of sync.Mutex.
 type mutexer interface {
@@ -25,15 +27,32 @@ type mutexer interface {
 }
 
 // newMu is a function that returns a new mutexer.
-// We set it to newMuquMu or newStdlibMu for benchmarking.
-var newMu = newMuquMu
+// We set it to newFifoMu or newStdlibMu for benchmarking.
+var newMu = newFifoMu
 
-func newMuquMu() mutexer {
+func newFifoMu() mutexer {
 	return &Mutex{}
 }
 
 func newStdlibMu() mutexer {
 	return &sync.Mutex{}
+}
+
+func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
+	b.Cleanup(func() {
+		// Restore to default.
+		newMu = newFifoMu
+	})
+	b.Run("fifomu", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newFifoMu
+		fn(b)
+	})
+	b.Run("stdlib", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newStdlibMu
+		fn(b)
+	})
 }
 
 func HammerMutex(m mutexer, loops int, cdone chan bool) {
@@ -115,7 +134,7 @@ func BenchmarkMutexUncontended(b *testing.B) {
 		pad [128]uint8
 	}
 
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			var mu PaddedMutex
 			for pb.Next() {
@@ -148,51 +167,32 @@ func benchmarkMutex(b *testing.B, slack, work bool) {
 	})
 }
 
-func benchBoth(b *testing.B, fn func(b *testing.B)) {
-	b.Cleanup(func() {
-		// Restore to default.
-		newMu = newMuquMu
-	})
-	b.Run("muqu", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newMuquMu
-		fn(b)
-	})
-	b.Run("stdlib", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newStdlibMu
-		fn(b)
-	})
-}
-
 func BenchmarkMutex(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		benchmarkMutex(b, false, false)
 	})
 }
 
 func BenchmarkMutexSlack(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		benchmarkMutex(b, true, false)
 	})
 }
 
 func BenchmarkMutexWork(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		benchmarkMutex(b, false, true)
 	})
-
 }
 
 func BenchmarkMutexWorkSlack(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		benchmarkMutex(b, true, true)
 	})
-
 }
 
 func BenchmarkMutexNoSpin(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		// This benchmark models a situation where spinning in the mutex should be
 		// non-profitable and allows to confirm that spinning does not do harm.
 		// To achieve this we create excess of goroutines most of which do local work.
@@ -228,7 +228,7 @@ func BenchmarkMutexNoSpin(b *testing.B) {
 }
 
 func BenchmarkMutexSpin(b *testing.B) {
-	benchBoth(b, func(b *testing.B) {
+	benchmarkEachImpl(b, func(b *testing.B) {
 		// This benchmark models a situation where spinning in the mutex should be
 		// profitable. To achieve this we create a goroutine per-proc.
 		// These goroutines access considerable amount of local data so that

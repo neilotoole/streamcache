@@ -1,4 +1,4 @@
-// Package muqu provides a Mutex that uses a FIFO queue to
+// Package fifomu provides a Mutex that uses a FIFO queue to
 // ensure fairness. Mutex implements sync.Locker, so it can
 // be used interchangeably with sync.Mutex. Performance is
 // significantly worse than sync.Mutex, so it should only be
@@ -10,7 +10,7 @@
 // fails to acquire the mutex for more than 1ms. However, for
 // some purposes waiting 1ms simply doesn't work, and FIFO
 // fairness is required, hence the need for this package.
-package muqu
+package fifomu
 
 import (
 	"sync"
@@ -22,6 +22,10 @@ import (
 // Mutex implements the same methodset as sync.Mutex, so it can
 // be used as a drop-in replacement.
 type Mutex struct {
+	// initOnce is required for lazy initialization, so that
+	// the zero value of Mutex is usable, like sync.Mutex.
+	initOnce sync.Once
+
 	// lockCh indicates whether the lock is held.
 	// A successful take from this channel acquires the lock.
 	lockCh chan struct{}
@@ -39,7 +43,7 @@ type Mutex struct {
 
 // init exists so that the zero value of Mutex is usable, like sync.Mutex.
 func (m *Mutex) init() {
-	if m.lockCh == nil {
+	m.initOnce.Do(func() {
 		m.lockCh = make(chan struct{}, 1)
 		m.reqQ = &queue[request]{}
 		m.reqPool = sync.Pool{New: func() interface{} {
@@ -48,7 +52,7 @@ func (m *Mutex) init() {
 		// Initial send on lockCh because a new mutex
 		// needs to start life unlocked.
 		m.lockCh <- struct{}{}
-	}
+	})
 }
 
 // Lock locks m.
@@ -56,7 +60,7 @@ func (m *Mutex) init() {
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	m.init()
-	req := m.reqPool.Get().(request)
+	req, _ := m.reqPool.Get().(request)
 	m.reqQ.Enqueue(req)
 
 	for {
@@ -67,7 +71,7 @@ func (m *Mutex) Lock() {
 			frontReq, ok := m.reqQ.Dequeue()
 			if !ok {
 				// Should be impossible.
-				panic("muqu: queue is empty")
+				panic("fifomu: queue is empty")
 			}
 
 			// Notify the front request that it can proceed.

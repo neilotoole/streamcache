@@ -69,10 +69,10 @@ func newErrorAfterNReader(n int, err error) io.Reader {
 }
 
 type errorAfterNReader struct {
+	err    error
 	mu     sync.Mutex
 	afterN int
 	count  int
-	err    error
 }
 
 func (r *errorAfterNReader) Read(p []byte) (n int, err error) {

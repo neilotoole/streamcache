@@ -1,4 +1,4 @@
-package muqu
+package fifomu
 
 import (
 	"sync"
@@ -28,7 +28,7 @@ func (q *queue[T]) Dequeue() (item T, ok bool) {
 	defer q.mu.Unlock()
 
 	if q.list == nil {
-		return
+		return item, false
 	}
 
 	lastElement := q.list.Back()
@@ -37,7 +37,7 @@ func (q *queue[T]) Dequeue() (item T, ok bool) {
 		ok = true
 	}
 
-	return
+	return item, ok
 }
 
 // Head returns the front item without removing it.
@@ -46,7 +46,7 @@ func (q *queue[T]) Head() (item T, ok bool) {
 	defer q.mu.RUnlock()
 
 	if q.list == nil {
-		return
+		return item, ok
 	}
 
 	if backItem := q.list.Back(); backItem != nil {
@@ -54,7 +54,7 @@ func (q *queue[T]) Head() (item T, ok bool) {
 		ok = true
 	}
 
-	return
+	return item, ok
 }
 
 // Size returns the size of the queue.

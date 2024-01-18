@@ -40,11 +40,12 @@ package streamcache
 import (
 	"context"
 	"errors"
-	"github.com/neilotoole/streamcache/internal/synchack"
 	"io"
 	"log/slog"
 	"runtime"
 	"sync"
+
+	"github.com/neilotoole/streamcache/internal/fifomu"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
@@ -68,15 +69,15 @@ type Cache struct {
 	cMu *sync.RWMutex
 
 	// srcMu guards concurrent access to reading from src. Note that it
-	// is not an instance of sync.Mutex, but instead muqu.Mutex, which
+	// is not an instance of sync.Mutex, but instead fifomu.Mutex, which
 	// is a mutex that uses a FIFO queue to ensure fairness. This is
 	// important in Cache.readMain because, as implemented, a reader
 	// could get the src lock on repeated calls, starving the other
 	// readers, which is a big problem if that greedy reader blocks
 	// on reading from src. Most likely our use of locks could be
 	// improved to avoid this scenario, but that's where we're at today.
-	srcMu *synchack.Mutex
-	//srcMu *synchack.Mutex
+	// srcMu *fifomu.Mutex
+	srcMu *fifomu.Mutex
 
 	logMu sync.Mutex // FIXME: delete
 
@@ -125,9 +126,8 @@ type Cache struct {
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		cMu: &sync.RWMutex{},
-		//srcMu: &muqu.Mutex{},
-		srcMu: &synchack.Mutex{},
+		cMu:   &sync.RWMutex{},
+		srcMu: &fifomu.Mutex{},
 		log:   log,
 		src:   src,
 		cache: make([]byte, 0),
@@ -190,7 +190,6 @@ TOP:
 	c.readLock(r, log)
 
 	if len(c.rdrs) == 1 {
-
 	}
 
 	if c.sealed && len(c.rdrs) == 1 {
@@ -233,7 +232,6 @@ TOP:
 			// write lock is held, so our naive strategy here is just
 			// to go back to the top.
 			c.Infof(r, log, slog.LevelDebug, "try read lock failed; going back to TOP.")
-			println("goto top")
 			goto TOP
 		}
 
@@ -431,7 +429,6 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 // that was active after Seal was invoked.
 func (c *Cache) Done() <-chan struct{} {
 	return c.done
-
 }
 
 // Size returns the number of bytes read from the underlying reader.
