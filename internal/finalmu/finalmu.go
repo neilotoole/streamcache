@@ -38,7 +38,7 @@ type Mutex struct {
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	m.mu.Lock()
-	if 1-m.cur >= 1 && m.waiters.Len() == 0 {
+	if 1-m.cur >= 1 && m.waiters.len == 0 {
 		m.cur++
 		m.mu.Unlock()
 		return
@@ -64,7 +64,7 @@ func (m *Mutex) Lock() {
 // If ctx is already done, LockContext may still succeed without blocking.
 func (m *Mutex) LockContext(ctx context.Context) error {
 	m.mu.Lock()
-	if 1-m.cur >= 1 && m.waiters.Len() == 0 {
+	if 1-m.cur >= 1 && m.waiters.len == 0 {
 		m.cur++
 		m.mu.Unlock()
 		return nil
@@ -106,7 +106,7 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 // TryLock tries to lock m and reports whether it succeeded.
 func (m *Mutex) TryLock() bool {
 	m.mu.Lock()
-	success := 1-m.cur >= 1 && m.waiters.Len() == 0
+	success := 1-m.cur >= 1 && m.waiters.len == 0
 	if success {
 		m.cur++
 	}
@@ -155,7 +155,7 @@ func (m *Mutex) notifyWaiters() {
 		}
 
 		m.cur++
-		_ = m.waiters.Remove(next)
+		m.waiters.Remove(next)
 		w <- struct{}{}
 	}
 }
