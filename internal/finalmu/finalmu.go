@@ -6,7 +6,6 @@
 package finalmu
 
 import (
-	stdlist "container/list"
 	"context"
 	"sync"
 )
@@ -20,19 +19,41 @@ func New() *Mutex {
 	return &Mutex{waiterPool: sync.Pool{New: newWaiter}}
 }
 
-// Mutex is a mutual exclusion lock whose Lock method uses a FIFO queue
-// to ensure fairness.
+// Mutex is a mutual exclusion lock whose Lock method returns
+// the lock to callers in FIFO call order.
 //
 // A Mutex must not be copied after first use.
 //
 // The zero value for a Mutex is an unlocked mutex.
 // Mutex implements the same methodset as sync.Mutex, so it can
-// be used as a drop-in replacement.
+// be used as a drop-in replacement. It implements an additional
+// method Mutex.LockContext, which provides context-aware locking.
 type Mutex struct {
 	waiterPool sync.Pool
-	waiters    stdlist.List
+	waiters    list[waiter]
 	cur        int64
 	mu         sync.Mutex
+}
+
+// Lock locks m.
+//
+// If the lock is already in use, the calling goroutine
+// blocks until the mutex is available.
+func (m *Mutex) Lock() {
+	m.mu.Lock()
+	if n-m.cur >= n && m.waiters.Len() == 0 {
+		m.cur += n
+		m.mu.Unlock()
+		return
+	}
+
+	w := m.waiterPool.Get().(waiter)
+	_ = m.waiters.PushBack(w)
+	m.mu.Unlock()
+
+	<-w
+	m.waiterPool.Put(w)
+	return
 }
 
 // LockContext locks m.
@@ -90,27 +111,6 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 	}
 }
 
-// Lock locks m.
-//
-// If the lock is already in use, the calling goroutine
-// blocks until the mutex is available.
-func (m *Mutex) Lock() {
-	m.mu.Lock()
-	if n-m.cur >= n && m.waiters.Len() == 0 {
-		m.cur += n
-		m.mu.Unlock()
-		return
-	}
-
-	w := m.waiterPool.Get().(waiter)
-	_ = m.waiters.PushBack(w)
-	m.mu.Unlock()
-
-	<-w
-	m.waiterPool.Put(w)
-	return
-}
-
 // TryLock tries to lock m and reports whether it succeeded.
 func (m *Mutex) TryLock() bool {
 	m.mu.Lock()
@@ -133,7 +133,7 @@ func (m *Mutex) Unlock() {
 	m.cur -= n
 	if m.cur < 0 {
 		m.mu.Unlock()
-		panic("semaphore: released more than held")
+		panic("sync: unlock of unlocked mutex")
 	}
 	m.notifyWaiters()
 	m.mu.Unlock()
@@ -146,7 +146,7 @@ func (m *Mutex) notifyWaiters() {
 			break // No more waiters blocked.
 		}
 
-		w := next.Value.(waiter)
+		w := next.Value
 		if n-m.cur < n {
 			// Not enough tokens for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
