@@ -16,7 +16,6 @@ var _ sync.Locker = (*Mutex)(nil)
 const n = 1
 
 type waiter struct {
-	n     int64
 	ready chan<- struct{} // Closed when semaphore acquired.
 }
 
@@ -38,7 +37,7 @@ type Mutex struct {
 // ctx.Err() and leaves the semaphore unchanged.
 //
 // If ctx is already done, LockContext may still succeed without blocking.
-func (s *Mutex) LockContext(ctx context.Context, n int64) error {
+func (s *Mutex) LockContext(ctx context.Context) error {
 	s.mu.Lock()
 	if n-s.cur >= n && s.waiters.Len() == 0 {
 		s.cur += n
@@ -47,7 +46,7 @@ func (s *Mutex) LockContext(ctx context.Context, n int64) error {
 	}
 
 	ready := make(chan struct{})
-	w := waiter{n: n, ready: ready}
+	w := waiter{ready: ready}
 	elem := s.waiters.PushBack(w)
 	s.mu.Unlock()
 
@@ -77,14 +76,13 @@ func (s *Mutex) LockContext(ctx context.Context, n int64) error {
 }
 
 func (s *Mutex) Lock() {
-	_ = s.LockContext(context.Background(), 1)
+	_ = s.LockContext(context.Background())
 	return
 }
 
 // TryLock acquires the semaphore with a weight of n without blocking.
 // On success, returns true. On failure, returns false and leaves the semaphore unchanged.
 func (s *Mutex) TryLock() bool {
-
 	s.mu.Lock()
 	success := n-s.cur >= n && s.waiters.Len() == 0
 	if success {
@@ -114,7 +112,7 @@ func (s *Mutex) notifyWaiters() {
 		}
 
 		w := next.Value.(waiter)
-		if n-s.cur < w.n {
+		if n-s.cur < n {
 			// Not enough tokens for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
 			// starvation for large requests; instead, we leave all remaining waiters
@@ -129,7 +127,7 @@ func (s *Mutex) notifyWaiters() {
 			break
 		}
 
-		s.cur += w.n
+		s.cur += n
 		s.waiters.Remove(next)
 		close(w.ready)
 	}
