@@ -1,8 +1,8 @@
 # fifomu: mutex with FIFO lock acquisition
 
 Package `fifomu` provides a `Mutex` whose `Lock` method returns
-the lock to callers in FIFO order. This is unlike `sync.Mutex`, where a
-single goroutine can repeatedly lock and unlock and relock the mutex
+the lock to callers in FIFO call order. This is unlike `sync.Mutex`, where
+a single goroutine can repeatedly lock and unlock and relock the mutex
 without handing off to other lock waiter goroutines (until after a 1ms
 starvation threshold, at which point `sync.Mutex` enters "starvation mode"
 for those starved waiters, but that's too late for our use case).

@@ -7,23 +7,19 @@
 package fifomu_test
 
 import (
+	"context"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/neilotoole/streamcache/internal/chanmu"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/neilotoole/streamcache/internal/fifomu"
-
-	"github.com/neilotoole/streamcache/internal/semamu"
 )
 
-// The tests in this file are copied from stdlib sync/mutex_test.go.
-
-var (
-	_ mutexer = (*sync.Mutex)(nil)
-	_ mutexer = (*chanmu.Mutex)(nil)
-)
+// Acknowledgement: Much of the test code in this file is
+// copied from stdlib sync/mutex_test.go.
 
 // mutexer is the exported methodset of sync.Mutex.
 type mutexer interface {
@@ -31,13 +27,19 @@ type mutexer interface {
 	TryLock() bool
 }
 
+var (
+	_ mutexer = (*fifomu.Mutex)(nil)
+	_ mutexer = (*sync.Mutex)(nil)
+	_ mutexer = (*semaphoreMutex)(nil)
+)
+
 // newMu is a function that returns a new mutexer.
 // We set it to newFifoMu, newStdlibMu or newSemaphoreMu
 // for benchmarking.
 var newMu = newFifoMu
 
 func newFifoMu() mutexer {
-	return fifomu.New()
+	return &fifomu.Mutex{}
 }
 
 func newStdlibMu() mutexer {
@@ -45,7 +47,7 @@ func newStdlibMu() mutexer {
 }
 
 func newSemaphoreMu() mutexer {
-	return semamu.New()
+	return &semaphoreMutex{sema: semaphore.NewWeighted(1)}
 }
 
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
@@ -64,7 +66,7 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 		newMu = newFifoMu
 		fn(b)
 	})
-	b.Run("semaphoreMutex", func(b *testing.B) {
+	b.Run("semaphoreMu", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newSemaphoreMu
 		fn(b)
@@ -140,7 +142,7 @@ func TestMutexFairness(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatalf("can't acquire Mutex in 10 seconds")
+		t.Fatalf("can't acquire mutex in 10 seconds")
 	}
 }
 
@@ -265,4 +267,28 @@ func BenchmarkMutexSpin(b *testing.B) {
 			}
 		})
 	})
+}
+
+var _ sync.Locker = (*semaphoreMutex)(nil)
+
+// semaphoreMutex is a mutex built on a semaphore.Weighted.
+// It exists as a baseline for benchmarking. Like fifomu.Mutex,
+// its Lock method returns the lock to callers in FIFO call order.
+type semaphoreMutex struct {
+	sema *semaphore.Weighted
+}
+
+// Lock implements sync.Locker.
+func (m *semaphoreMutex) Lock() {
+	_ = m.sema.Acquire(context.Background(), 1)
+}
+
+// Unlock implements sync.Locker.
+func (m *semaphoreMutex) Unlock() {
+	m.sema.Release(1)
+}
+
+// TryLock tries to lock m and reports whether it succeeded.
+func (m *semaphoreMutex) TryLock() bool {
+	return m.sema.TryAcquire(1)
 }

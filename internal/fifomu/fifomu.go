@@ -2,7 +2,19 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package fifomu provides a weighted semaphore implementation.
+// Package fifomu provides a Mutex whose Lock method returns
+// the lock to callers in FIFO call order. This is unlike sync.Mutex, where
+// a single goroutine can repeatedly lock and unlock and relock the mutex
+// without handing off to other lock waiter goroutines (until after a 1ms
+// starvation threshold, at which point sync.Mutex enters "starvation mode"
+// for those starved waiters, but that's too late for our use case).
+//
+// fifomu.Mutex implements the exported methods of sync.Mutex and thus is
+// a drop-in replacement (and by extension also implements sync.Locker).
+//
+// Note: unless you need the FIFO behavior, you should prefer sync.Mutex,
+// because, for typical workloads, its "greedy-relock" behavior requires
+// less goroutine switching and yields better performance.
 package fifomu
 
 import (
@@ -12,17 +24,13 @@ import (
 
 var _ sync.Locker = (*Mutex)(nil)
 
-// New returns a new Mutex ready for use.
-func New() *Mutex {
-	return &Mutex{}
-}
-
 // Mutex is a mutual exclusion lock whose Lock method returns
 // the lock to callers in FIFO call order.
 //
 // A Mutex must not be copied after first use.
 //
 // The zero value for a Mutex is an unlocked mutex.
+//
 // Mutex implements the same methodset as sync.Mutex, so it can
 // be used as a drop-in replacement. It implements an additional
 // method Mutex.LockContext, which provides context-aware locking.
