@@ -79,7 +79,19 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 }
 
 func (s *Mutex) Lock() {
-	_ = s.LockContext(context.Background())
+	s.mu.Lock()
+	if n-s.cur >= n && s.waiters.Len() == 0 {
+		s.cur += n
+		s.mu.Unlock()
+		return
+	}
+
+	w := s.reqPool.Get().(waiter)
+	_ = s.waiters.PushBack(w)
+	s.mu.Unlock()
+
+	<-w
+	s.reqPool.Put(w)
 	return
 }
 
