@@ -29,9 +29,9 @@ func New() *Mutex {
 // The callers can request access with a given weight.
 type Mutex struct {
 	reqPool sync.Pool
+	waiters list.List
 	cur     int64
 	mu      sync.Mutex
-	waiters list.List
 }
 
 // LockContext acquires the semaphore with a weight of n, blocking until resources
