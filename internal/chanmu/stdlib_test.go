@@ -4,7 +4,7 @@
 
 // GOMAXPROCS=10 go test
 
-package fifomu
+package chanmu
 
 import (
 	"runtime"

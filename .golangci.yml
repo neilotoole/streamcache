@@ -19,7 +19,7 @@ run:
   skip-dirs:
 
   skip-files:
-    - internal/fifomu/stdlib_test.go
+    - internal/chanmu/stdlib_test.go
 
 output:
   sort-results: true

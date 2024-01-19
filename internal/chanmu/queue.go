@@ -1,4 +1,4 @@
-package fifomu
+package chanmu
 
 import (
 	"sync"
