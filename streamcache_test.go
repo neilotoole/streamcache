@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -497,34 +495,4 @@ func isDone(cache *Cache) bool {
 	default:
 		return false
 	}
-}
-
-func TestSema(t *testing.T) {
-	ctx := context.Background()
-	sema := semaphore.NewWeighted(2)
-	t.Log("got it")
-	num := 10
-
-	wait := make(chan struct{})
-
-	for i := 0; i < num; i++ {
-		go func(i int) {
-			t.Logf("Acquiring: %d", i)
-			sema.Acquire(ctx, 1)
-			t.Logf("ACQUIRED!: %d", i)
-		}(i)
-		time.Sleep(time.Millisecond * 10)
-	}
-
-	// t.Logf("waiting for %d", 10)
-	time.Sleep(time.Second)
-	// t.Log("got it again")
-
-	for i := 0; i < 5; i++ {
-		sema.Release(1)
-		t.Logf("Released: %d", i)
-		time.Sleep(time.Millisecond * 10)
-	}
-
-	<-wait
 }

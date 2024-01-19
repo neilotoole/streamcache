@@ -4,7 +4,7 @@
 
 // GOMAXPROCS=10 go test
 
-package chanmu
+package fifomu_test
 
 import (
 	"runtime"
@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neilotoole/streamcache/internal/chanmu"
 	"github.com/neilotoole/streamcache/internal/fifomu"
+
 	"github.com/neilotoole/streamcache/internal/semamu"
 )
 
@@ -20,7 +22,7 @@ import (
 
 var (
 	_ mutexer = (*sync.Mutex)(nil)
-	_ mutexer = (*Mutex)(nil)
+	_ mutexer = (*chanmu.Mutex)(nil)
 )
 
 // mutexer is the exported methodset of sync.Mutex.
@@ -30,59 +32,43 @@ type mutexer interface {
 }
 
 // newMu is a function that returns a new mutexer.
-// We set it to newFifoMu or newStdlibMu for benchmarking.
-var newMu = newFinalMu
+// We set it to newFifoMu, newStdlibMu or newSemaphoreMu
+// for benchmarking.
+var newMu = newFifoMu
 
 func newFifoMu() mutexer {
-	return &Mutex{}
+	return fifomu.New()
 }
 
 func newStdlibMu() mutexer {
 	return &sync.Mutex{}
 }
 
-func newStdSemaMu() mutexer {
+func newSemaphoreMu() mutexer {
 	return semamu.New()
-}
-
-func newSemaMu() mutexer {
-	return semamu.New()
-}
-
-func newFinalMu() mutexer {
-	return fifomu.New()
 }
 
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 	b.Cleanup(func() {
 		// Restore to default.
-		newMu = newFinalMu
+		newMu = newFifoMu
 	})
-	//b.Run("fifomu", func(b *testing.B) {
-	//	b.ReportAllocs()
-	//	newMu = newFifoMu
-	//	fn(b)
-	//})
+
 	b.Run("stdlib", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newStdlibMu
 		fn(b)
 	})
-	b.Run("stdsemamu", func(b *testing.B) {
+	b.Run("fifomu", func(b *testing.B) {
 		b.ReportAllocs()
-		newMu = newStdSemaMu
+		newMu = newFifoMu
 		fn(b)
 	})
-	b.Run("finalmu", func(b *testing.B) {
+	b.Run("semaphoreMutex", func(b *testing.B) {
 		b.ReportAllocs()
-		newMu = newFinalMu
+		newMu = newSemaphoreMu
 		fn(b)
 	})
-	//b.Run("semamu2", func(b *testing.B) {
-	//	b.ReportAllocs()
-	//	newMu = newSemaMu2
-	//	fn(b)
-	//})
 }
 
 func HammerMutex(m mutexer, loops int, cdone chan bool) {
@@ -94,7 +80,7 @@ func HammerMutex(m mutexer, loops int, cdone chan bool) {
 			continue
 		}
 		m.Lock()
-		m.Unlock()
+		m.Unlock() //nolint:staticcheck
 	}
 	cdone <- true
 }
@@ -147,7 +133,7 @@ func TestMutexFairness(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			time.Sleep(100 * time.Microsecond)
 			mu.Lock()
-			mu.Unlock()
+			mu.Unlock() //nolint:staticcheck
 		}
 		done <- true
 	}()
@@ -160,16 +146,17 @@ func TestMutexFairness(t *testing.T) {
 
 func BenchmarkMutexUncontended(b *testing.B) {
 	type PaddedMutex struct {
-		Mutex
-		pad [128]uint8
+		mutexer
+		pad [128]uint8 //nolint:unused
 	}
 
 	benchmarkEachImpl(b, func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			var mu PaddedMutex
+			mu.mutexer = newMu()
 			for pb.Next() {
 				mu.Lock()
-				mu.Unlock()
+				mu.Unlock() //nolint:staticcheck
 			}
 		})
 	})
@@ -185,7 +172,7 @@ func benchmarkMutex(b *testing.B, slack, work bool) {
 		foo := 0
 		for pb.Next() {
 			mu.Lock()
-			mu.Unlock()
+			mu.Unlock() //nolint:staticcheck
 			if work {
 				for i := 0; i < 100; i++ {
 					foo *= 2

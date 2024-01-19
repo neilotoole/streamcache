@@ -45,7 +45,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/neilotoole/streamcache/internal/semamu2"
+	"github.com/neilotoole/streamcache/internal/fifomu"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
@@ -78,14 +78,13 @@ type Cache struct {
 
 	// srcMu guards concurrent access to reading from src. Note that it
 	// is not an instance of sync.Mutex, but instead fifomu.Mutex, which
-	// is a mutex that uses a FIFO queue to ensure fairness. This is
-	// important in Cache.readMain because, as implemented, a reader
-	// could get the src lock on repeated calls, starving the other
+	// is a mutex whose Lock method returns the lock to callers in FIFO
+	// call order. This is important in Cache.readMain because, as implemented,
+	// a reader could get the src lock on repeated calls, starving the other
 	// readers, which is a big problem if that greedy reader blocks
 	// on reading from src. Most likely our use of locks could be
 	// improved to avoid this scenario, but that's where we're at today.
-	// srcMu *fifomu.Mutex
-	srcMu *semamu2.Mutex
+	srcMu *fifomu.Mutex
 
 	// Consider our two mutexes cMu and srcMu ^^ above. There are effectively
 	// three locks that can be acquired.
@@ -127,7 +126,7 @@ type Cache struct {
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
 		cMu:   &sync.RWMutex{},
-		srcMu: semamu2.New(),
+		srcMu: &fifomu.Mutex{},
 		log:   log,
 		src:   src,
 		cache: make([]byte, 0),
@@ -188,9 +187,6 @@ func (c *Cache) readMain(r *Reader, p []byte, offset int) (n int, err error) {
 	log := c.getLog(r)
 TOP:
 	c.readLock(r, log)
-
-	if len(c.rdrs) == 1 {
-	}
 
 	if c.sealed && len(c.rdrs) == 1 {
 		// The cache is sealed, and this is the final reader.

@@ -32,7 +32,7 @@ func (l *list[T]) front() *element[T] {
 func (l *list[T]) pushBackElem(v T) *element[T] {
 	l.lazyInit()
 
-	e := elementPool.Get().(*element[T])
+	e := elementPool.Get().(*element[T]) //nolint:errcheck
 	e.Value = v
 	l.insert(e, l.root.prev)
 	return e
@@ -43,7 +43,7 @@ func (l *list[T]) pushBackElem(v T) *element[T] {
 func (l *list[T]) pushBack(v T) {
 	l.lazyInit()
 
-	e := elementPool.Get().(*element[T])
+	e := elementPool.Get().(*element[T]) //nolint:errcheck
 	e.Value = v
 	l.insert(e, l.root.prev)
 }
