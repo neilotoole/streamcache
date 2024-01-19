@@ -53,21 +53,21 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 		// Restore to default.
 		newMu = newFifoMu
 	})
-	//b.Run("fifomu", func(b *testing.B) {
-	//	b.ReportAllocs()
-	//	newMu = newFifoMu
-	//	fn(b)
-	//})
-	//b.Run("stdlib", func(b *testing.B) {
-	//	b.ReportAllocs()
-	//	newMu = newStdlibMu
-	//	fn(b)
-	//})
-	//b.Run("stdsemamu", func(b *testing.B) {
-	//	b.ReportAllocs()
-	//	newMu = newStdSemaMu
-	//	fn(b)
-	//})
+	b.Run("fifomu", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newFifoMu
+		fn(b)
+	})
+	b.Run("stdlib", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newStdlibMu
+		fn(b)
+	})
+	b.Run("stdsemamu", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newStdSemaMu
+		fn(b)
+	})
 	b.Run("semamu2", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newSemaMu2
