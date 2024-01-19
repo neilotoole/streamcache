@@ -52,7 +52,7 @@ func main() {
 	defer f.Close()
 	log := slog.New(devlog.NewHandler(f, slog.LevelDebug))
 
-	fmt.Fprintln(os.Stdin, colorize(ansiFaint, "multicase: enter text and press [RETURN]"))
+	fmt.Fprintln(os.Stdin, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
 
 	if err = exec(ctx, log, os.Stdin, os.Stdout); err != nil {
 		printErr(err)
