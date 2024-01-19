@@ -7,6 +7,7 @@
 package fifomu
 
 import (
+	"github.com/neilotoole/streamcache/internal/finalmu"
 	"github.com/neilotoole/streamcache/internal/semamu2"
 	"github.com/neilotoole/streamcache/internal/stdsemamu"
 	"runtime"
@@ -30,7 +31,7 @@ type mutexer interface {
 
 // newMu is a function that returns a new mutexer.
 // We set it to newFifoMu or newStdlibMu for benchmarking.
-var newMu = newSemaMu2
+var newMu = newFinalMu
 
 func newFifoMu() mutexer {
 	return &Mutex{}
@@ -46,6 +47,9 @@ func newStdSemaMu() mutexer {
 
 func newSemaMu2() mutexer {
 	return semamu2.New()
+}
+func newFinalMu() mutexer {
+	return finalmu.New()
 }
 
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
@@ -66,6 +70,11 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 	b.Run("stdsemamu", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newStdSemaMu
+		fn(b)
+	})
+	b.Run("finalmu", func(b *testing.B) {
+		b.ReportAllocs()
+		newMu = newFinalMu
 		fn(b)
 	})
 	b.Run("semamu2", func(b *testing.B) {
