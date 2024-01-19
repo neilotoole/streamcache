@@ -14,7 +14,6 @@ import (
 
 	"github.com/neilotoole/streamcache/internal/finalmu"
 	"github.com/neilotoole/streamcache/internal/semamu2"
-	"github.com/neilotoole/streamcache/internal/stdsemamu"
 )
 
 // The tests in this file are copied from stdlib sync/mutex_test.go.
@@ -43,7 +42,7 @@ func newStdlibMu() mutexer {
 }
 
 func newStdSemaMu() mutexer {
-	return stdsemamu.New()
+	return semamu.New()
 }
 
 func newSemaMu2() mutexer {
