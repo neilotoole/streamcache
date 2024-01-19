@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/semaphore"
 	"io"
 	"math/rand"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -515,9 +516,9 @@ func TestSema(t *testing.T) {
 		time.Sleep(time.Millisecond * 10)
 	}
 
-	//t.Logf("waiting for %d", 10)
+	// t.Logf("waiting for %d", 10)
 	time.Sleep(time.Second)
-	//t.Log("got it again")
+	// t.Log("got it again")
 
 	for i := 0; i < 5; i++ {
 		sema.Release(1)

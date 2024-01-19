@@ -4,29 +4,22 @@ import "sync"
 
 var elementPool = sync.Pool{New: func() any { return new(element[waiter]) }}
 
-// list represents a doubly linked list.
+// list is a doubly-linked list of type T.
 type list[T any] struct {
 	root element[T]
 	len  uint
 }
 
-// Init initializes or clears list l.
-func (l *list[T]) Init() *list[T] {
-	l.root.next = &l.root
-	l.root.prev = &l.root
-	l.len = 0
-
-	return l
-}
-
 func (l *list[T]) lazyInit() {
 	if l.root.next == nil {
-		l.Init()
+		l.root.next = &l.root
+		l.root.prev = &l.root
+		l.len = 0
 	}
 }
 
-// Front returns the first element of list l or nil.
-func (l *list[T]) Front() *element[T] {
+// front returns the first element of list l or nil.
+func (l *list[T]) front() *element[T] {
 	if l.len == 0 {
 		return nil
 	}
@@ -34,47 +27,49 @@ func (l *list[T]) Front() *element[T] {
 	return l.root.next
 }
 
-// PushBack inserts a new element e with value v at
+// pushBackElem inserts a new element e with value v at
 // the back of list l and returns e.
-func (l *list[T]) PushBack(v T) *element[T] {
+func (l *list[T]) pushBackElem(v T) *element[T] {
 	l.lazyInit()
 
-	return l.insertValue(v, l.root.prev)
+	e := elementPool.Get().(*element[T])
+	e.Value = v
+	l.insert(e, l.root.prev)
+	return e
 }
 
-// Remove removes e from l if e is an element of list l.
-func (l *list[T]) Remove(e *element[T]) {
+// pushBack inserts a new element e with value v at
+// the back of list l.
+func (l *list[T]) pushBack(v T) {
+	l.lazyInit()
+
+	e := elementPool.Get().(*element[T])
+	e.Value = v
+	l.insert(e, l.root.prev)
+}
+
+// remove removes e from l if e is an element of list l.
+func (l *list[T]) remove(e *element[T]) {
 	if e.list == l {
-		l.remove(e)
+		e.prev.next = e.next
+		e.next.prev = e.prev
+		e.next = nil // avoid memory leaks
+		e.prev = nil // avoid memory leaks
+		e.list = nil
+		l.len--
 	}
 
 	elementPool.Put(e)
 }
 
-func (l *list[T]) insert(e, at *element[T]) *element[T] {
+// insert inserts e after at.
+func (l *list[T]) insert(e, at *element[T]) {
 	e.prev = at
 	e.next = at.next
 	e.prev.next = e
 	e.next.prev = e
 	e.list = l
 	l.len++
-
-	return e
-}
-
-func (l *list[T]) insertValue(v T, at *element[T]) *element[T] {
-	e := elementPool.Get().(*element[T])
-	e.Value = v
-	return l.insert(e, at)
-}
-
-func (l *list[T]) remove(e *element[T]) {
-	e.prev.next = e.next
-	e.next.prev = e.prev
-	e.next = nil // avoid memory leaks
-	e.prev = nil // avoid memory leaks
-	e.list = nil
-	l.len--
 }
 
 // element is a node of a linked list.

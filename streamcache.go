@@ -40,11 +40,12 @@ package streamcache
 import (
 	"context"
 	"errors"
-	"github.com/neilotoole/streamcache/internal/semamu2"
 	"io"
 	"log/slog"
 	"runtime"
 	"sync"
+
+	"github.com/neilotoole/streamcache/internal/semamu2"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if

@@ -7,13 +7,14 @@
 package fifomu
 
 import (
-	"github.com/neilotoole/streamcache/internal/finalmu"
-	"github.com/neilotoole/streamcache/internal/semamu2"
-	"github.com/neilotoole/streamcache/internal/stdsemamu"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/neilotoole/streamcache/internal/finalmu"
+	"github.com/neilotoole/streamcache/internal/semamu2"
+	"github.com/neilotoole/streamcache/internal/stdsemamu"
 )
 
 // The tests in this file are copied from stdlib sync/mutex_test.go.
@@ -48,6 +49,7 @@ func newStdSemaMu() mutexer {
 func newSemaMu2() mutexer {
 	return semamu2.New()
 }
+
 func newFinalMu() mutexer {
 	return finalmu.New()
 }

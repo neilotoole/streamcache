@@ -44,13 +44,12 @@ func (m *Mutex) Lock() {
 		return
 	}
 
-	w := waiterPool.Get().(waiter)
-	_ = m.waiters.PushBack(w)
+	w := waiterPool.Get().(waiter) //nolint:errcheck
+	m.waiters.pushBack(w)
 	m.mu.Unlock()
 
 	<-w
 	waiterPool.Put(w)
-	return
 }
 
 // LockContext locks m.
@@ -70,8 +69,8 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 		return nil
 	}
 
-	w := waiterPool.Get().(waiter)
-	elem := m.waiters.PushBack(w)
+	w := waiterPool.Get().(waiter) //nolint:errcheck
+	elem := m.waiters.pushBackElem(w)
 	m.mu.Unlock()
 
 	select {
@@ -85,12 +84,12 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 			err = nil
 			waiterPool.Put(w)
 		default:
-			isFront := m.waiters.Front() == elem
-			m.waiters.Remove(elem)
+			isFront := m.waiters.front() == elem
+			m.waiters.remove(elem)
 			// If we're at the front and there's extra tokens left,
 			// notify other waiters.
 			if isFront && m.cur < 1 {
-				//if isFront && 1 > m.cur {
+				// if isFront && 1 > m.cur {
 				m.notifyWaiters()
 			}
 		}
@@ -133,7 +132,7 @@ func (m *Mutex) Unlock() {
 
 func (m *Mutex) notifyWaiters() {
 	for {
-		next := m.waiters.Front()
+		next := m.waiters.front()
 		if next == nil {
 			break // No more waiters blocked.
 		}
@@ -155,7 +154,7 @@ func (m *Mutex) notifyWaiters() {
 		}
 
 		m.cur++
-		m.waiters.Remove(next)
+		m.waiters.remove(next)
 		w <- struct{}{}
 	}
 }

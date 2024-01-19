@@ -2,8 +2,9 @@ package stdsemamu
 
 import (
 	"context"
-	"golang.org/x/sync/semaphore"
 	"sync"
+
+	"golang.org/x/sync/semaphore"
 )
 
 var _ sync.Locker = (*Mutex)(nil)
