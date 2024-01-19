@@ -18,13 +18,17 @@ const n = 1
 type waiter chan struct{}
 
 func New() *Mutex {
-	w := &Mutex{}
+	w := &Mutex{
+		reqPool: sync.Pool{New: func() any {
+			return waiter(make(chan struct{}))
+		}}}
 	return w
 }
 
 // Mutex provides a way to bound concurrent access to a resource.
 // The callers can request access with a given weight.
 type Mutex struct {
+	reqPool sync.Pool
 	cur     int64
 	mu      sync.Mutex
 	waiters list.List
@@ -43,7 +47,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 		return nil
 	}
 
-	w := waiter(make(chan struct{}))
+	w := s.reqPool.Get().(waiter)
 	elem := s.waiters.PushBack(w)
 	s.mu.Unlock()
 
@@ -56,6 +60,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 			// Acquired the semaphore after we were canceled.  Rather than trying to
 			// fix up the queue, just pretend we didn't notice the cancelation.
 			err = nil
+			s.reqPool.Put(w)
 		default:
 			isFront := s.waiters.Front() == elem
 			s.waiters.Remove(elem)
@@ -68,6 +73,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 		return err
 
 	case <-w:
+		s.reqPool.Put(w)
 		return nil
 	}
 }
