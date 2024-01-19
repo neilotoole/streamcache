@@ -19,11 +19,6 @@ func (l *list[T]) Init() *list[T] {
 	return l
 }
 
-// NewList returns an initialized list.
-func newList[T any]() *list[T] {
-	return new(list[T]).Init()
-}
-
 // Len returns the number of elements of list l.
 func (l *list[T]) Len() uint {
 	return l.len
