@@ -114,6 +114,7 @@ func (s *Weighted) notifyWaiters() {
 
 		s.cur += 1
 		s.waiters.Remove(next)
-		close(w)
+		w <- struct{}{}
+		//close(w)
 	}
 }
