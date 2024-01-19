@@ -30,7 +30,7 @@ type mutexer interface {
 
 // newMu is a function that returns a new mutexer.
 // We set it to newFifoMu or newStdlibMu for benchmarking.
-var newMu = newFifoMu
+var newMu = newSemaMu2
 
 func newFifoMu() mutexer {
 	return &Mutex{}
@@ -43,6 +43,7 @@ func newStdlibMu() mutexer {
 func newStdSemaMu() mutexer {
 	return stdsemamu.New()
 }
+
 func newSemaMu2() mutexer {
 	return semamu2.New()
 }
@@ -52,21 +53,21 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 		// Restore to default.
 		newMu = newFifoMu
 	})
-	b.Run("fifomu", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newFifoMu
-		fn(b)
-	})
-	b.Run("stdlib", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newStdlibMu
-		fn(b)
-	})
-	b.Run("stdsemamu", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newStdSemaMu
-		fn(b)
-	})
+	//b.Run("fifomu", func(b *testing.B) {
+	//	b.ReportAllocs()
+	//	newMu = newFifoMu
+	//	fn(b)
+	//})
+	//b.Run("stdlib", func(b *testing.B) {
+	//	b.ReportAllocs()
+	//	newMu = newStdlibMu
+	//	fn(b)
+	//})
+	//b.Run("stdsemamu", func(b *testing.B) {
+	//	b.ReportAllocs()
+	//	newMu = newStdSemaMu
+	//	fn(b)
+	//})
 	b.Run("semamu2", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newSemaMu2

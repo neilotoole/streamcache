@@ -40,12 +40,11 @@ package streamcache
 import (
 	"context"
 	"errors"
+	"github.com/neilotoole/streamcache/internal/semamu2"
 	"io"
 	"log/slog"
 	"runtime"
 	"sync"
-
-	"github.com/neilotoole/streamcache/internal/fifomu"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
@@ -85,7 +84,7 @@ type Cache struct {
 	// on reading from src. Most likely our use of locks could be
 	// improved to avoid this scenario, but that's where we're at today.
 	// srcMu *fifomu.Mutex
-	srcMu *fifomu.Mutex
+	srcMu *semamu2.Mutex
 
 	// Consider our two mutexes cMu and srcMu ^^ above. There are effectively
 	// three locks that can be acquired.
@@ -127,7 +126,7 @@ type Cache struct {
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
 		cMu:   &sync.RWMutex{},
-		srcMu: &fifomu.Mutex{},
+		srcMu: semamu2.New(),
 		log:   log,
 		src:   src,
 		cache: make([]byte, 0),

@@ -6,14 +6,26 @@ import (
 	"sync"
 )
 
-type waiter chan struct{}
+func NewWeighted() *Weighted {
+	return &Weighted{
+		reqPool: sync.Pool{New: func() any {
+			return make(chan struct{})
+		}},
+	}
+}
 
 // Weighted provides a way to bound concurrent access to a resource.
 // The callers can request access with a given weight.
 type Weighted struct {
-	cur     int64
-	mu      sync.Mutex
+	// reqPool caches request instances for reuse.
+	// For some applications, it may be normal for the Mutex to
+	// be locked and unlocked millions of times, so we want to
+	// avoid allocating millions of request instances.
+	reqPool sync.Pool
 	waiters list.List
+
+	cur int64
+	mu  sync.Mutex
 }
 
 // Acquire acquires the semaphore with a weight of n, blocking until resources
@@ -21,22 +33,15 @@ type Weighted struct {
 // ctx.Err() and leaves the semaphore unchanged.
 //
 // If ctx is already done, Acquire may still succeed without blocking.
-func (s *Weighted) Acquire(ctx context.Context, n int64) error {
+func (s *Weighted) Acquire(ctx context.Context) error {
 	s.mu.Lock()
-	if 1-s.cur >= n && s.waiters.Len() == 0 {
-		s.cur += n
+	if s.cur <= 0 && s.waiters.Len() == 0 {
+		s.cur++
 		s.mu.Unlock()
 		return nil
 	}
 
-	if n > 1 {
-		// Don't make other Acquire calls block on one that's doomed to fail.
-		s.mu.Unlock()
-		<-ctx.Done()
-		return ctx.Err()
-	}
-
-	w := waiter(make(chan struct{}))
+	w := s.reqPool.Get().(chan struct{})
 	elem := s.waiters.PushBack(w)
 	s.mu.Unlock()
 
@@ -47,8 +52,9 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 		select {
 		case <-w:
 			// Acquired the semaphore after we were canceled.  Rather than trying to
-			// fix up the queue, just pretend we didn't notice the cancelation.
+			// fix up the queue, just pretend we didn't notice the cancellation.
 			err = nil
+			s.reqPool.Put(w)
 		default:
 			isFront := s.waiters.Front() == elem
 			s.waiters.Remove(elem)
@@ -61,26 +67,27 @@ func (s *Weighted) Acquire(ctx context.Context, n int64) error {
 		return err
 
 	case <-w:
+		s.reqPool.Put(w)
 		return nil
 	}
 }
 
 // TryAcquire acquires the semaphore with a weight of n without blocking.
 // On success, returns true. On failure, returns false and leaves the semaphore unchanged.
-func (s *Weighted) TryAcquire(n int64) bool {
+func (s *Weighted) TryAcquire() bool {
 	s.mu.Lock()
-	success := 1-s.cur >= n && s.waiters.Len() == 0
+	success := s.cur <= 0 && s.waiters.Len() == 0
 	if success {
-		s.cur += n
+		s.cur++
 	}
 	s.mu.Unlock()
 	return success
 }
 
 // Release releases the semaphore with a weight of n.
-func (s *Weighted) Release(n int64) {
+func (s *Weighted) Release() {
 	s.mu.Lock()
-	s.cur -= n
+	s.cur--
 	if s.cur < 0 {
 		s.mu.Unlock()
 		panic("semaphore: released more than held")
@@ -96,8 +103,8 @@ func (s *Weighted) notifyWaiters() {
 			break // No more waiters blocked.
 		}
 
-		w := next.Value.(waiter)
-		if 1-s.cur < 1 {
+		w := next.Value.(chan struct{})
+		if s.cur < 0 {
 			// Not enough tokens for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
 			// starvation for large requests; instead, we leave all remaining waiters
@@ -112,9 +119,8 @@ func (s *Weighted) notifyWaiters() {
 			break
 		}
 
-		s.cur += 1
+		s.cur++
 		s.waiters.Remove(next)
 		w <- struct{}{}
-		//close(w)
 	}
 }

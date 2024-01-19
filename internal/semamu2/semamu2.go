@@ -10,21 +10,21 @@ var _ sync.Locker = (*Mutex)(nil)
 var ctx = context.Background()
 
 func New() *Mutex {
-	return &Mutex{}
+	return &Mutex{sema: NewWeighted()}
 }
 
 type Mutex struct {
-	sema Weighted
+	sema *Weighted
 }
 
 func (m *Mutex) Lock() {
-	_ = m.sema.Acquire(ctx, 1)
+	_ = m.sema.Acquire(ctx)
 }
 
 func (m *Mutex) Unlock() {
-	m.sema.Release(1)
+	m.sema.Release()
 }
 
 func (m *Mutex) TryLock() bool {
-	return m.sema.TryAcquire(1)
+	return m.sema.TryAcquire()
 }
