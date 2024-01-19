@@ -143,7 +143,7 @@ func (s *Mutex) notifyWaiters() {
 		}
 
 		s.cur += n
-		s.waiters.Remove(next)
+		_ = s.waiters.Remove(next)
 		w <- struct{}{}
 	}
 }
