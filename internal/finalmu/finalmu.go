@@ -6,7 +6,7 @@
 package finalmu
 
 import (
-	"container/list"
+	stdlist "container/list"
 	"context"
 	"sync"
 )
@@ -30,7 +30,7 @@ func New() *Mutex {
 // be used as a drop-in replacement.
 type Mutex struct {
 	waiterPool sync.Pool
-	waiters    list.List
+	waiters    stdlist.List
 	cur        int64
 	mu         sync.Mutex
 }
