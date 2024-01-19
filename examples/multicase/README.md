@@ -8,7 +8,7 @@ Go package.
 ## Usage
 
 ```shell
-$ go install github.com/neilotoole/streamcache/example/multicase
+$ go install github.com/neilotoole/streamcache/examples/multicase
 $ echo "hello world" | multicase
 ```
 

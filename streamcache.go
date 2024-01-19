@@ -45,7 +45,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/neilotoole/streamcache/internal/fifomu"
+	"github.com/neilotoole/fifomu"
 )
 
 // ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
@@ -72,30 +72,6 @@ type Cache struct {
 	// src is never read from again.
 	readErr error
 
-	// cMu guards concurrent access to Cache's fields and methods.
-	// REVISIT: Why a pointer and not a value?
-	cMu *sync.RWMutex
-
-	// srcMu guards concurrent access to reading from src. Note that it
-	// is not an instance of sync.Mutex, but instead fifomu.Mutex, which
-	// is a mutex whose Lock method returns the lock to callers in FIFO
-	// call order. This is important in Cache.readMain because, as implemented,
-	// a reader could get the src lock on repeated calls, starving the other
-	// readers, which is a big problem if that greedy reader blocks
-	// on reading from src. Most likely our use of locks could be
-	// improved to avoid this scenario, but that's where we're at today.
-	srcMu *fifomu.Mutex
-
-	// Consider our two mutexes cMu and srcMu ^^ above. There are effectively
-	// three locks that can be acquired.
-	//
-	//  - cMu's read lock
-	//  - cMu's write lock
-	//  - srcMu's lock
-	//
-	// These three locks are referred to in the comments as the read, write,
-	// and src locks.
-
 	// done is closed after the Cache is sealed and the last
 	// reader is closed. See Cache.Done.
 	done chan struct{}
@@ -111,22 +87,43 @@ type Cache struct {
 	// It is nilled when the final reader switches to readSrcDirect.
 	cache []byte
 
+	// srcMu guards concurrent access to reading from src. Note that it
+	// is not an instance of sync.Mutex, but instead fifomu.Mutex, which
+	// is a mutex whose Lock method returns the lock to callers in FIFO
+	// call order. This is important in Cache.readMain because, as implemented,
+	// a reader could get the src lock on repeated calls, starving the other
+	// readers, which is a big problem if that greedy reader blocks
+	// on reading from src. Most likely our use of locks could be
+	// improved to avoid this scenario, but that's where we're at today.
+	srcMu fifomu.Mutex
+
 	// size is the count of bytes read from src.
 	size int
+
+	// cMu guards concurrent access to Cache's fields and methods.
+	cMu sync.RWMutex
 
 	logMu sync.Mutex // FIXME: delete
 
 	// sealed is set to true when Seal is called. When sealed is true,
 	// no more calls to NewReader are allowed.
 	sealed bool
+
+	// Consider our two mutexes cMu and srcMu above. There are effectively
+	// three locks that can be acquired.
+	//
+	//  - cMu's read lock
+	//  - cMu's write lock
+	//  - srcMu's lock
+	//
+	// These three locks are referred to in the comments as the read, write,
+	// and src locks.
 }
 
 // New returns a new Cache that reads from src. Use Cache.NewReader
 // to create read from src.
 func New(log *slog.Logger, src io.Reader) *Cache {
 	c := &Cache{
-		cMu:   &sync.RWMutex{},
-		srcMu: &fifomu.Mutex{},
 		log:   log,
 		src:   src,
 		cache: make([]byte, 0),

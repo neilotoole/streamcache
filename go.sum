@@ -1,5 +1,7 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/neilotoole/fifomu v0.0.0-20240119074345-d1be564b22cc h1:dRqL01SFcgnmUtfhUZiJVorZ2ReiXAtJ52/pEc0EEYY=
+github.com/neilotoole/fifomu v0.0.0-20240119074345-d1be564b22cc/go.mod h1:eQEVNCI1Ur9GPyv7oRhtNjEWd4bhaxxNCFB+jLv06e0=
 github.com/neilotoole/sq v0.46.2-0.20240115035654-9aa45b1db372 h1:87PJDrMhaOW4ckjnJAi5CS5SmixiVTEkB8gyaiBP4D0=
 github.com/neilotoole/sq v0.46.2-0.20240115035654-9aa45b1db372/go.mod h1:KrVOW2pBUw61YXO/r9j6nlAmbFClmP4f0Kjce7Y+GgA=
 github.com/oleiade/lane/v2 v2.0.0 h1:XW/ex/Inr+bPkLd3O240xrFOhUkTd4Wy176+Gv0E3Qw=
