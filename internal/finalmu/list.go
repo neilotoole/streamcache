@@ -68,14 +68,13 @@ func (l *list[T]) insertValue(v T, at *element[T]) *element[T] {
 	return l.insert(e, at)
 }
 
-func (l *list[T]) remove(e *element[T]) *element[T] {
+func (l *list[T]) remove(e *element[T]) {
 	e.prev.next = e.next
 	e.next.prev = e.prev
 	e.next = nil // avoid memory leaks
 	e.prev = nil // avoid memory leaks
 	e.list = nil
 	l.len--
-	return e
 }
 
 // element is a node of a linked list.
