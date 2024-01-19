@@ -126,6 +126,6 @@ func (s *Mutex) notifyWaiters() {
 
 		s.cur += n
 		s.waiters.Remove(next)
-		close(w)
+		w <- struct{}{}
 	}
 }
