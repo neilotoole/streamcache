@@ -1,5 +1,9 @@
 package finalmu
 
+import "sync"
+
+var elementPool = sync.Pool{New: func() any { return new(element[waiter]) }}
+
 // list represents a doubly linked list.
 type list[T any] struct {
 	root element[T]
@@ -84,7 +88,9 @@ func (l *list[T]) Remove(e *element[T]) T {
 		l.remove(e)
 	}
 
-	return e.Value
+	v := e.Value
+	elementPool.Put(e)
+	return v
 }
 
 // MoveToFront moves element e to the front of list l.
@@ -158,7 +164,9 @@ func (l *list[T]) insert(e, at *element[T]) *element[T] {
 }
 
 func (l *list[T]) insertValue(v T, at *element[T]) *element[T] {
-	return l.insert(&element[T]{Value: v}, at)
+	e := elementPool.Get().(*element[T])
+	e.Value = v
+	return l.insert(e, at)
 }
 
 func (l *list[T]) remove(e *element[T]) *element[T] {
