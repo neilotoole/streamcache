@@ -11,7 +11,7 @@ for those starved waiters).
 a drop-in replacement. The code is copied from `sync.Mutex`, with only minor
 changes to facilitate FIFO.
 
-However, unless you need the FIFO behavior, you should prefer `sync.Mutex` ,
+However, unless you need the FIFO behavior, you should prefer `sync.Mutex`,
 because its "greedy-relock" behavior requires less context switching and
 yields better performance for typical workloads.
 
