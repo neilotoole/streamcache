@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package finalmu provides a weighted semaphore implementation.
-package finalmu
+// Package fifomu provides a weighted semaphore implementation.
+package fifomu
 
 import (
 	"context"
@@ -139,7 +139,7 @@ func (m *Mutex) notifyWaiters() {
 
 		w := next.Value
 		if m.cur > 0 {
-			// Not enough tokens for the next waiter.  We could keep going (to try to
+			// Not enough items for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
 			// starvation for large requests; instead, we leave all remaining waiters
 			// blocked.

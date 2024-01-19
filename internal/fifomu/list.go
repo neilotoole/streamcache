@@ -1,4 +1,4 @@
-package finalmu
+package fifomu
 
 import "sync"
 

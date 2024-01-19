@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neilotoole/streamcache/internal/finalmu"
-	"github.com/neilotoole/streamcache/internal/semamu2"
+	"github.com/neilotoole/streamcache/internal/fifomu"
+	"github.com/neilotoole/streamcache/internal/semamu"
 )
 
 // The tests in this file are copied from stdlib sync/mutex_test.go.
@@ -45,12 +45,12 @@ func newStdSemaMu() mutexer {
 	return semamu.New()
 }
 
-func newSemaMu2() mutexer {
-	return semamu2.New()
+func newSemaMu() mutexer {
+	return semamu.New()
 }
 
 func newFinalMu() mutexer {
-	return finalmu.New()
+	return fifomu.New()
 }
 
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {

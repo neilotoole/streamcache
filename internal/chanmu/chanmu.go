@@ -1,5 +1,5 @@
-// Package chanmu provides a Mutex that uses a FIFO queue to
-// ensure fairness. Mutex implements sync.Locker, so it can
+// Package chanmu provides a Mutex whose Lock method uses a FIFO queue
+// to ensure fairness. Mutex implements sync.Locker, so it can
 // be used interchangeably with sync.Mutex. Performance is
 // significantly worse than sync.Mutex, so it should only be
 // used when fairness is required.
