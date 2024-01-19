@@ -15,9 +15,7 @@ var _ sync.Locker = (*Mutex)(nil)
 
 const n = 1
 
-type waiter struct {
-	ready chan<- struct{} // Closed when semaphore acquired.
-}
+type waiter chan struct{}
 
 func New() *Mutex {
 	w := &Mutex{}
@@ -45,8 +43,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 		return nil
 	}
 
-	ready := make(chan struct{})
-	w := waiter{ready: ready}
+	w := waiter(make(chan struct{}))
 	elem := s.waiters.PushBack(w)
 	s.mu.Unlock()
 
@@ -55,7 +52,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 		err := ctx.Err()
 		s.mu.Lock()
 		select {
-		case <-ready:
+		case <-w:
 			// Acquired the semaphore after we were canceled.  Rather than trying to
 			// fix up the queue, just pretend we didn't notice the cancelation.
 			err = nil
@@ -70,7 +67,7 @@ func (s *Mutex) LockContext(ctx context.Context) error {
 		s.mu.Unlock()
 		return err
 
-	case <-ready:
+	case <-w:
 		return nil
 	}
 }
@@ -129,6 +126,6 @@ func (s *Mutex) notifyWaiters() {
 
 		s.cur += n
 		s.waiters.Remove(next)
-		close(w.ready)
+		close(w)
 	}
 }
