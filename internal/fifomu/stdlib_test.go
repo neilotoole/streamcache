@@ -55,13 +55,13 @@ func newFinalMu() mutexer {
 func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 	b.Cleanup(func() {
 		// Restore to default.
-		newMu = newFifoMu
+		newMu = newFinalMu
 	})
-	b.Run("fifomu", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newFifoMu
-		fn(b)
-	})
+	//b.Run("fifomu", func(b *testing.B) {
+	//	b.ReportAllocs()
+	//	newMu = newFifoMu
+	//	fn(b)
+	//})
 	b.Run("stdlib", func(b *testing.B) {
 		b.ReportAllocs()
 		newMu = newStdlibMu
@@ -77,11 +77,11 @@ func benchmarkEachImpl(b *testing.B, fn func(b *testing.B)) {
 		newMu = newFinalMu
 		fn(b)
 	})
-	b.Run("semamu2", func(b *testing.B) {
-		b.ReportAllocs()
-		newMu = newSemaMu2
-		fn(b)
-	})
+	//b.Run("semamu2", func(b *testing.B) {
+	//	b.ReportAllocs()
+	//	newMu = newSemaMu2
+	//	fn(b)
+	//})
 }
 
 func HammerMutex(m mutexer, loops int, cdone chan bool) {

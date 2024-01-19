@@ -12,11 +12,9 @@ import (
 
 var _ sync.Locker = (*Mutex)(nil)
 
-const n = 1
-
 // New returns a new Mutex ready for use.
 func New() *Mutex {
-	return &Mutex{waiterPool: sync.Pool{New: newWaiter}}
+	return &Mutex{}
 }
 
 // Mutex is a mutual exclusion lock whose Lock method returns
@@ -29,10 +27,9 @@ func New() *Mutex {
 // be used as a drop-in replacement. It implements an additional
 // method Mutex.LockContext, which provides context-aware locking.
 type Mutex struct {
-	waiterPool sync.Pool
-	waiters    list[waiter]
-	cur        int64
-	mu         sync.Mutex
+	waiters list[waiter]
+	cur     int64
+	mu      sync.Mutex
 }
 
 // Lock locks m.
@@ -41,18 +38,18 @@ type Mutex struct {
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	m.mu.Lock()
-	if n-m.cur >= n && m.waiters.Len() == 0 {
-		m.cur += n
+	if 1-m.cur >= 1 && m.waiters.Len() == 0 {
+		m.cur++
 		m.mu.Unlock()
 		return
 	}
 
-	w := m.waiterPool.Get().(waiter)
+	w := waiterPool.Get().(waiter)
 	_ = m.waiters.PushBack(w)
 	m.mu.Unlock()
 
 	<-w
-	m.waiterPool.Put(w)
+	waiterPool.Put(w)
 	return
 }
 
@@ -67,19 +64,13 @@ func (m *Mutex) Lock() {
 // If ctx is already done, LockContext may still succeed without blocking.
 func (m *Mutex) LockContext(ctx context.Context) error {
 	m.mu.Lock()
-	if n-m.cur >= n && m.waiters.Len() == 0 {
-		m.cur += n
+	if 1-m.cur >= 1 && m.waiters.Len() == 0 {
+		m.cur++
 		m.mu.Unlock()
 		return nil
 	}
 
-	if m.waiterPool.New == nil {
-		// Lazy init so that the zero value of Mutex is usable,
-		// like sync.Mutex.
-		m.waiterPool.New = newWaiter
-	}
-
-	w := m.waiterPool.Get().(waiter)
+	w := waiterPool.Get().(waiter)
 	elem := m.waiters.PushBack(w)
 	m.mu.Unlock()
 
@@ -92,13 +83,14 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 			// Acquired the lock after we were canceled.  Rather than trying to
 			// fix up the queue, just pretend we didn't notice the cancellation.
 			err = nil
-			m.waiterPool.Put(w)
+			waiterPool.Put(w)
 		default:
 			isFront := m.waiters.Front() == elem
 			m.waiters.Remove(elem)
 			// If we're at the front and there's extra tokens left,
 			// notify other waiters.
-			if isFront && n > m.cur {
+			if isFront && m.cur < 1 {
+				//if isFront && 1 > m.cur {
 				m.notifyWaiters()
 			}
 		}
@@ -106,7 +98,7 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 		return err
 
 	case <-w:
-		m.waiterPool.Put(w)
+		waiterPool.Put(w)
 		return nil
 	}
 }
@@ -114,9 +106,9 @@ func (m *Mutex) LockContext(ctx context.Context) error {
 // TryLock tries to lock m and reports whether it succeeded.
 func (m *Mutex) TryLock() bool {
 	m.mu.Lock()
-	success := n-m.cur >= n && m.waiters.Len() == 0
+	success := 1-m.cur >= 1 && m.waiters.Len() == 0
 	if success {
-		m.cur += n
+		m.cur++
 	}
 	m.mu.Unlock()
 	return success
@@ -130,7 +122,7 @@ func (m *Mutex) TryLock() bool {
 // arrange for another goroutine to unlock it.
 func (m *Mutex) Unlock() {
 	m.mu.Lock()
-	m.cur -= n
+	m.cur--
 	if m.cur < 0 {
 		m.mu.Unlock()
 		panic("sync: unlock of unlocked mutex")
@@ -147,7 +139,7 @@ func (m *Mutex) notifyWaiters() {
 		}
 
 		w := next.Value
-		if n-m.cur < n {
+		if m.cur > 0 {
 			// Not enough tokens for the next waiter.  We could keep going (to try to
 			// find a waiter with a smaller request), but under load that could cause
 			// starvation for large requests; instead, we leave all remaining waiters
@@ -162,14 +154,12 @@ func (m *Mutex) notifyWaiters() {
 			break
 		}
 
-		m.cur += n
+		m.cur++
 		_ = m.waiters.Remove(next)
 		w <- struct{}{}
 	}
 }
 
-type waiter chan struct{}
+var waiterPool = sync.Pool{New: func() any { return waiter(make(chan struct{})) }}
 
-func newWaiter() any {
-	return waiter(make(chan struct{}))
-}
+type waiter chan struct{}
