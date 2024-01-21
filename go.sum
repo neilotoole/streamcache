@@ -2,6 +2,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/neilotoole/fifomu v0.0.0-20240119074345-d1be564b22cc h1:dRqL01SFcgnmUtfhUZiJVorZ2ReiXAtJ52/pEc0EEYY=
 github.com/neilotoole/fifomu v0.0.0-20240119074345-d1be564b22cc/go.mod h1:eQEVNCI1Ur9GPyv7oRhtNjEWd4bhaxxNCFB+jLv06e0=
+github.com/neilotoole/fifomu v0.1.1 h1:S6stULFbK9/ZWjbcgZjxhlmXNg1P2IB7AisEfk/AaBM=
+github.com/neilotoole/fifomu v0.1.1/go.mod h1:eQEVNCI1Ur9GPyv7oRhtNjEWd4bhaxxNCFB+jLv06e0=
 github.com/neilotoole/sq v0.46.2-0.20240115035654-9aa45b1db372 h1:87PJDrMhaOW4ckjnJAi5CS5SmixiVTEkB8gyaiBP4D0=
 github.com/neilotoole/sq v0.46.2-0.20240115035654-9aa45b1db372/go.mod h1:KrVOW2pBUw61YXO/r9j6nlAmbFClmP4f0Kjce7Y+GgA=
 github.com/oleiade/lane/v2 v2.0.0 h1:XW/ex/Inr+bPkLd3O240xrFOhUkTd4Wy176+Gv0E3Qw=
@@ -16,6 +18,8 @@ golang.org/x/exp v0.0.0-20220827204233-334a2380cb91 h1:tnebWN09GYg9OLPss1KXj8txw
 golang.org/x/exp v0.0.0-20220827204233-334a2380cb91/go.mod h1:cyybsKvd6eL0RnXn6p/Grxp8F5bW7iYuBgsNCOHpMYE=
 golang.org/x/exp v0.0.0-20240112132812-db7319d0e0e3 h1:hNQpMuAJe5CtcUqCXaWga3FHu+kQvCqcsoVaQgSV60o=
 golang.org/x/exp v0.0.0-20240112132812-db7319d0e0e3/go.mod h1:idGWGoKP1toJGkd5/ig9ZLuPcZBC3ewk7SzmH0uou08=
+golang.org/x/net v0.20.0 h1:aCL9BSgETF1k+blQaYUBx9hJ9LOGP3gAVemcZlf1Kpo=
+golang.org/x/net v0.20.0/go.mod h1:z8BVo6PvndSri0LbOE3hAn0apkU+1YvI6E70E9jsnvY=
 golang.org/x/sync v0.6.0 h1:5BMeUDZ7vkXGfEr1x9B4bRcTH4lpkTkpdh0T/J+qjbQ=
 golang.org/x/sync v0.6.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=

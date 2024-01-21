@@ -344,13 +344,14 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		// cache, so we can't nil out c.cache yet.
 		return c.fillFromCache(p, offset)
 	case end == c.size:
+		n, err = c.fillFromCache(p, offset)
 		// The read is satisfied completely by the cache with
 		// no unread cache bytes. Thus, we can nil out c.cache,
 		// because the next read will be direct from src, and
 		// the cache will never be used again.
 		c.cache = nil
 		r.readFn = c.readSrcDirect
-		return c.fillFromCache(p, offset)
+		return n, err
 	case offset == c.size:
 		// The read is entirely beyond what's cached, so we switch
 		// to reading directly from src. We can nil out c.cache,
@@ -411,7 +412,7 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 //	}
 //
 // A Cache is considered finished after Seal has been invoked on it, and there
-// are zero unclosed Reader instances remaining.Note that Cache.Err returning a
+// are zero unclosed Reader instances remaining. Note that Cache.Err returning a
 // non-nil value does not of itself indicate that the Cache is finished. There
 // could be other readers still consuming earlier parts of the cache.
 //
