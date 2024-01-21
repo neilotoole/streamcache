@@ -250,7 +250,7 @@ func TestCache_File_Concurrent(t *testing.T) {
 func TestCache_File_Concurrent2(t *testing.T) {
 	t.Parallel()
 
-	// FIXME: this test should be updated?
+	// FIXME: Do we need two TestCache_File_Concurrent tests?
 
 	ctx := context.Background()
 	wantSize, fp := generateSampleFile(t, numSampleRows)
