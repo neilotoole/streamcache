@@ -1,4 +1,4 @@
-package streamcache
+package streamcache_test
 
 // File helper_test.go contains test helper functionality.
 

@@ -1,4 +1,4 @@
-package streamcache
+package streamcache_test
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/neilotoole/streamcache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +30,7 @@ func TestCache(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	cache := New(strings.NewReader(anything))
+	cache := streamcache.New(strings.NewReader(anything))
 	require.False(t, isDone(cache))
 	select {
 	case <-cache.Done():
@@ -47,9 +49,9 @@ func TestCache(t *testing.T) {
 	require.NoError(t, gotErr)
 	require.Equal(t, 4, gotN)
 	require.Equal(t, "anyt", string(buf))
-	require.Equal(t, 4, r.offset)
-	require.Equal(t, 4, cache.size)
-	require.Equal(t, 4, len(cache.cache))
+	require.Equal(t, 4, streamcache.ReaderOffset(r))
+	require.Equal(t, 4, cache.Size())
+	require.Equal(t, 4, len(streamcache.CacheData(cache)))
 
 	// Seal the source; after this, no more readers can be created.
 	cache.Seal()
@@ -71,8 +73,8 @@ func TestCache(t *testing.T) {
 	require.Nil(t, cache.Err())
 	require.Equal(t, 4, gotN)
 	require.Equal(t, "hing", string(buf))
-	require.Equal(t, 8, r.offset)
-	require.Equal(t, 8, cache.size)
+	require.Equal(t, 8, streamcache.ReaderOffset(r))
+	require.Equal(t, 8, cache.Size())
 
 	// Read again, but this time we should get io.EOF.
 	gotN, gotErr = r.Read(buf)
@@ -80,7 +82,7 @@ func TestCache(t *testing.T) {
 	require.Equal(t, 0, gotN)
 	require.Equal(t, io.EOF, gotErr)
 	require.Equal(t, io.EOF, cache.Err())
-	require.Equal(t, 8, r.offset)
+	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, cache.Size())
 	require.Equal(t, 8, cache.ErrAt())
 	require.False(t, isDone(cache))
@@ -91,7 +93,7 @@ func TestCache(t *testing.T) {
 	require.Equal(t, 0, gotN)
 	require.Equal(t, io.EOF, gotErr)
 	require.Equal(t, io.EOF, cache.Err())
-	require.Equal(t, 8, r.offset)
+	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, cache.Size())
 	require.Equal(t, 8, cache.ErrAt())
 	require.False(t, isDone(cache))
@@ -115,7 +117,7 @@ func TestCache(t *testing.T) {
 }
 
 func TestReaderAlreadyClosed(t *testing.T) {
-	cache := New(strings.NewReader(anything))
+	cache := streamcache.New(strings.NewReader(anything))
 	r := cache.NewReader(context.Background())
 	buf := make([]byte, 4)
 	_, err := r.Read(buf)
@@ -125,13 +127,13 @@ func TestReaderAlreadyClosed(t *testing.T) {
 	require.NoError(t, r.Close())
 	_, err = r.Read(buf)
 	require.Error(t, err)
-	require.Equal(t, ErrAlreadyClosed, err)
+	require.Equal(t, streamcache.ErrAlreadyClosed, err)
 }
 
 func TestSingleReaderImmediateSeal(t *testing.T) {
 	t.Parallel()
 
-	cache := New(strings.NewReader(anything))
+	cache := streamcache.New(strings.NewReader(anything))
 	r := cache.NewReader(context.Background())
 	cache.Seal()
 
@@ -165,7 +167,7 @@ func TestStringReader(t *testing.T) {
 func TestReader_NoSeal(t *testing.T) {
 	t.Parallel()
 
-	cache := New(strings.NewReader(anything))
+	cache := streamcache.New(strings.NewReader(anything))
 	r := cache.NewReader(context.Background())
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
@@ -189,7 +191,7 @@ func TestCache_File(t *testing.T) {
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 	recorder := &rcRecorder{r: f}
-	cache := New(recorder)
+	cache := streamcache.New(recorder)
 
 	r := cache.NewReader(ctx)
 	require.NoError(t, err)
@@ -216,12 +218,12 @@ func TestCache_File_Concurrent(t *testing.T) {
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 
-	cache := New(f)
+	cache := streamcache.New(f)
 	for i := 0; i < numG; i++ {
 		r := cache.NewReader(ctx)
 		require.NoError(t, err)
 
-		go func(r *Reader) {
+		go func(r *streamcache.Reader) {
 			defer func() { assert.NoError(t, r.Close()) }()
 
 			sleepJitter()
@@ -259,12 +261,12 @@ func TestCache_File_Concurrent2(t *testing.T) {
 	require.NoError(t, err)
 
 	recorder := &rcRecorder{r: f}
-	cache := New(recorder)
+	cache := streamcache.New(recorder)
 	require.NoError(t, err)
 
 	t.Logf("Iterations: %d", numG)
 
-	rdrs := make([]*Reader, numG)
+	rdrs := make([]*streamcache.Reader, numG)
 	for i := 0; i < numG; i++ {
 		rdrs[i] = cache.NewReader(ctx)
 	}
@@ -273,7 +275,7 @@ func TestCache_File_Concurrent2(t *testing.T) {
 	sealOnce := &sync.Once{}
 
 	for i := range rdrs {
-		go func(i int, r *Reader) {
+		go func(i int, r *streamcache.Reader) {
 			defer func() {
 				assert.NoError(t, r.Close())
 			}()
@@ -304,7 +306,7 @@ func TestSeal_AlreadySealed(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	cache := New(strings.NewReader(anything))
+	cache := streamcache.New(strings.NewReader(anything))
 	_ = cache.NewReader(ctx)
 
 	cache.Seal()
@@ -320,7 +322,7 @@ func TestSeal_AfterRead(t *testing.T) {
 	want := strings.Repeat(anything, 100)
 
 	ctx := context.Background()
-	cache := New(strings.NewReader(want))
+	cache := streamcache.New(strings.NewReader(want))
 	r1 := cache.NewReader(ctx)
 	require.NotNil(t, r1)
 	gotData1, err := io.ReadAll(r1)
@@ -342,7 +344,7 @@ func TestContextAwareness(t *testing.T) {
 
 	wantErr := errors.New("oh noes")
 	originRdr := newDelayReader(newLimitRandReader(100000), time.Second, true)
-	cache := New(originRdr)
+	cache := streamcache.New(originRdr)
 
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -363,7 +365,7 @@ func TestErrorHandling(t *testing.T) {
 	wantErr := errors.New("oh noes")
 	const errAfterN = 50
 
-	cache := New(newErrorAfterNReader(errAfterN, wantErr))
+	cache := streamcache.New(newErrorAfterNReader(errAfterN, wantErr))
 
 	r1 := cache.NewReader(ctx)
 	gotData1, err := io.ReadAll(r1)
@@ -385,7 +387,7 @@ func TestClose(t *testing.T) {
 
 	wantData := []byte(anything)
 	recorder := &rcRecorder{r: strings.NewReader(anything)}
-	cache := New(recorder)
+	cache := streamcache.New(recorder)
 
 	r1 := cache.NewReader(ctx)
 
@@ -468,7 +470,7 @@ func sleepJitter() {
 	time.Sleep(d)
 }
 
-func isDone(cache *Cache) bool {
+func isDone(cache *streamcache.Cache) bool {
 	select {
 	case <-cache.Done():
 		return true
