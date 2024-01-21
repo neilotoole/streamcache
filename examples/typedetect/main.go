@@ -75,12 +75,6 @@ func main() {
 	}
 }
 
-const (
-	tokenThreshold  = 10
-	numPreviewLines = 5
-	maxLineWidth    = 80
-)
-
 // detectFunc is a function that detects the type of data on rc.
 // On success, the function returns a non-empty string, e.g. "json"
 // or "xml". On failure, the function returns empty string. The
@@ -99,17 +93,7 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 		}
 	}
 
-	previewRdr, err := cache.NewReader(ctx)
-	if err != nil {
-		return err
-	}
-	defer previewRdr.Close()
-
-	if err = cache.Seal(); err != nil {
-		return err
-	}
-
-	detectedCh := make(chan string, len(detectors))
+	detectionCh := make(chan string, len(detectors))
 	wg := &sync.WaitGroup{}
 	wg.Add(len(detectors))
 	for i := range detectors {
@@ -118,15 +102,14 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 			r, detector := rdrs[i], detectors[i]
 			defer r.Close()
 
-			typ := detector(ctx, r)
-			if typ != "" {
-				detectedCh <- typ
+			if typ := detector(ctx, r); typ != "" {
+				detectionCh <- typ
 			}
 		}(i)
 	}
 
 	wg.Wait()
-	close(detectedCh)
+	close(detectionCh)
 
 	select {
 	case <-ctx.Done():
@@ -142,26 +125,35 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	}
 
 	var detectedTypes []string
-	for typ := range detectedCh {
-		if typ != "" {
-			detectedTypes = append(detectedTypes, typ)
-		}
+	for typ := range detectionCh {
+		detectedTypes = append(detectedTypes, typ)
 	}
 
 	if len(detectedTypes) == 0 {
 		fmt.Fprintln(out, colorize(ansiRed, "typedetect: unable to detect type"))
 	} else {
 		fmt.Fprint(out,
-			colorize(ansiGreen, "typedetect: "+strings.Join(detectedTypes, ", "))+"\n\n")
+			colorize(ansiGreen, "typedetect: "+strings.Join(detectedTypes, ", "))+"\n")
 	}
 
-	var lines int
-	printSummary := func() {
-		summary := fmt.Sprintf("\n%d lines [%d bytes]", lines, cache.Size())
-		fmt.Fprintln(out, colorize(ansiGreen, summary))
+	// previewRdr reads the content, prints the head and tail, each
+	// up to numPreviewLines lines.
+	previewRdr, err := cache.NewReader(ctx)
+	if err != nil {
+		return err
 	}
+	defer previewRdr.Close()
 
-	var line string
+	// There will be no new readers after this point, so we can
+	// seal the cache. This results in previewRdr switching to
+	// reading directly from the source reader, as soon as it
+	// has exhausted the cache. This mode switch is transparent to
+	// the caller here of course; streamcache takes care of it.
+	if err = cache.Seal(); err != nil {
+		return err
+	}
+	// Scan and print up to numPreviewLines from input head.
+	var lineCount int
 	sc := bufio.NewScanner(previewRdr)
 	for i := 0; i < numPreviewLines && sc.Scan(); i++ {
 		select {
@@ -169,55 +161,60 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 			return ctx.Err()
 		default:
 		}
-		line = sc.Text()
-		// Print the head of the input
-		printPreviewLine(out, line)
-		lines++
+		printPreviewLine(out, sc.Text())
+		lineCount++
 	}
 
 	if err = sc.Err(); err != nil {
 		return err
 	}
 
-	// Use a channel as a sliding window of lines; we're
-	// only interested in the last printHeadTailLines lines.
+	// Use a channel as a sliding window / circular buffer of lines
+	// so that, at the end, we can print the tail of numPreviewLines,
+	// and just skip the stuff in the middle.
 	window := make(chan string, numPreviewLines)
-	// Now gather the tail of the input.
+	var line string
 	for sc.Scan() {
 		line = sc.Text()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case window <- line:
+			// The window is not yet full, so just add the line.
 		default:
+			// The window is full, so pop the oldest line.
 			<-window
+			// And now add the new line.
 			window <- line
 		}
-		lines++
+		lineCount++
 	}
 
 	if sc.Err() != nil {
 		return sc.Err()
 	}
 
-	var previewLines []string
+	// We're done with processing the input now. We can
+	// close the window.
 	close(window)
+
+	skipCount := lineCount - len(window) - numPreviewLines
+	if skipCount > 0 {
+		fmt.Fprintln(out, colorize(ansiGreen, fmt.Sprintf("Skip %d line(s)", skipCount)+ellipsis))
+	}
+
 	for line = range window {
-		previewLines = append(previewLines, line)
-	}
-
-	if lines > len(previewLines)+numPreviewLines {
-		fmt.Fprint(out, "\n"+colorize(ansiGreen, "[SNIP]")+"\n\n")
-	}
-
-	for _, line = range previewLines {
 		printPreviewLine(out, line)
 	}
 
-	printSummary()
+	summary := fmt.Sprintf("%d lines [%d bytes]", lineCount, cache.Size())
+	fmt.Fprintln(out, colorize(ansiGreen, summary))
 	return nil
 }
 
+// printPreviewLine prints a line of the input. It
+// truncates long lines at maxLineWidth and adds
+// an ellipsis...
 func printPreviewLine(out io.Writer, line string) {
 	if len(line) <= maxLineWidth {
 		fmt.Fprintln(out, colorize(ansiFaint, line))
@@ -243,11 +240,12 @@ func (pr *prompter) Read(p []byte) (n int, err error) {
 	return pr.in.Read(p)
 }
 
+// detectJSON returns "json" if rc appears to contain JSON, otherwise
+// it returns empty string. It closes rc in either case.
 func detectJSON(ctx context.Context, rc io.ReadCloser) (typ string) {
 	defer rc.Close()
 
 	dec := json.NewDecoder(rc)
-
 	var err error
 	for i := 0; i < tokenThreshold; i++ {
 		select {
@@ -263,6 +261,8 @@ func detectJSON(ctx context.Context, rc io.ReadCloser) (typ string) {
 	return "json"
 }
 
+// detectXML returns "xml" if rc appears to contain XML, otherwise
+// it returns empty string. It closes rc in either case.
 func detectXML(ctx context.Context, rc io.ReadCloser) (typ string) {
 	defer rc.Close()
 
@@ -282,6 +282,8 @@ func detectXML(ctx context.Context, rc io.ReadCloser) (typ string) {
 	return "xml"
 }
 
+// detectJSON returns "html" if rc appears to contain HTML, otherwise
+// it returns empty string. It closes rc in either case.
 func detectHTML(ctx context.Context, rc io.ReadCloser) (typ string) {
 	defer rc.Close()
 
@@ -310,18 +312,20 @@ func detectHTML(ctx context.Context, rc io.ReadCloser) (typ string) {
 	return "html"
 }
 
+const (
+	tokenThreshold  = 10
+	numPreviewLines = 5
+	maxLineWidth    = 80
+	ansiReset       = "\033[0m" // terminal colors
+	ansiFaint       = "\033[2m"
+	ansiRed         = "\033[31m"
+	ansiGreen       = "\033[32m"
+	ellipsis        = ansiGreen + "…" + ansiReset
+)
+
 func colorize(ansi, s string) string {
 	return ansi + s + ansiReset
 }
-
-const (
-	ansiFaint = "\033[2m"
-	ansiReset = "\033[0m"
-	ansiRed   = "\033[31m"
-	ansiGreen = "\033[32m"
-	ansiBlue  = "\033[34m"
-	ellipsis  = ansiGreen + "…" + ansiReset
-)
 
 func printErr(err error) {
 	fmt.Fprintln(os.Stderr, colorize(ansiRed, "error: "+err.Error()))
