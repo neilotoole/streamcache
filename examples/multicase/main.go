@@ -75,7 +75,7 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
 	// cache := streamcache.New(log, &prompter{in: in, out: out})
-	cache := streamcache.New(log, in)
+	cache := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
 	for i := range rdrs {

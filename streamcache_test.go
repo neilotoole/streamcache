@@ -28,7 +28,7 @@ func TestCache(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	cache := New(nil, strings.NewReader(anything))
+	cache := New(strings.NewReader(anything))
 	require.False(t, isDone(cache))
 	select {
 	case <-cache.Done():
@@ -120,7 +120,7 @@ func TestCache(t *testing.T) {
 }
 
 func TestReaderAlreadyClosed(t *testing.T) {
-	cache := New(nil, strings.NewReader(anything))
+	cache := New(strings.NewReader(anything))
 	r, err := cache.NewReader(context.Background())
 	require.NoError(t, err)
 	buf := make([]byte, 4)
@@ -137,7 +137,7 @@ func TestReaderAlreadyClosed(t *testing.T) {
 func TestSingleReaderImmediateSeal(t *testing.T) {
 	t.Parallel()
 
-	cache := New(nil, strings.NewReader(anything))
+	cache := New(strings.NewReader(anything))
 	r, err := cache.NewReader(context.Background())
 	require.NoError(t, err)
 
@@ -173,7 +173,7 @@ func TestStringReader(t *testing.T) {
 func TestReader_NoSeal(t *testing.T) {
 	t.Parallel()
 
-	cache := New(nil, strings.NewReader(anything))
+	cache := New(strings.NewReader(anything))
 	r, err := cache.NewReader(context.Background())
 	require.NoError(t, err)
 
@@ -199,7 +199,7 @@ func TestCache_File(t *testing.T) {
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 	recorder := &rcRecorder{r: f}
-	cache := New(nil, recorder)
+	cache := New(recorder)
 
 	r, err := cache.NewReader(ctx)
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestCache_File_Concurrent(t *testing.T) {
 	f, err := os.Open(fp)
 	require.NoError(t, err)
 
-	cache := New(nil, f)
+	cache := New(f)
 	for i := 0; i < numG; i++ {
 		r, err := cache.NewReader(ctx)
 		require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestCache_File_Concurrent2(t *testing.T) {
 	require.NoError(t, err)
 
 	recorder := &rcRecorder{r: f}
-	cache := New(nil, recorder)
+	cache := New(recorder)
 	require.NoError(t, err)
 
 	t.Logf("Iterations: %d", numG)
@@ -315,7 +315,7 @@ func TestSeal_AlreadSealed(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	cache := New(nil, strings.NewReader(anything))
+	cache := New(strings.NewReader(anything))
 	r, err := cache.NewReader(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -334,7 +334,7 @@ func TestSeal_AfterRead(t *testing.T) {
 	want := strings.Repeat(anything, 100)
 
 	ctx := context.Background()
-	cache := New(nil, strings.NewReader(want))
+	cache := New(strings.NewReader(want))
 	r1, err := cache.NewReader(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, r1)
@@ -357,7 +357,7 @@ func TestContextAwareness(t *testing.T) {
 
 	wantErr := errors.New("oh noes")
 	originRdr := newDelayReader(newLimitRandReader(100000), time.Second, true)
-	cache := New(nil, originRdr)
+	cache := New(originRdr)
 
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -379,7 +379,7 @@ func TestErrorHandling(t *testing.T) {
 	wantErr := errors.New("oh noes")
 	const errAfterN = 50
 
-	cache := New(nil, newErrorAfterNReader(errAfterN, wantErr))
+	cache := New(newErrorAfterNReader(errAfterN, wantErr))
 
 	r1, err := cache.NewReader(ctx)
 	require.NoError(t, err)
@@ -403,7 +403,7 @@ func TestClose(t *testing.T) {
 
 	wantData := []byte(anything)
 	recorder := &rcRecorder{r: strings.NewReader(anything)}
-	cache := New(nil, recorder)
+	cache := New(recorder)
 
 	r1, err := cache.NewReader(ctx)
 	require.NoError(t, err)
