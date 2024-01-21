@@ -66,9 +66,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
 	for i := range rdrs {
-		if rdrs[i], err = cache.NewReader(ctx); err != nil {
-			return err
-		}
+		rdrs[i] = cache.NewReader(ctx)
 	}
 	rdrs[0].Name = "red-upper"   // FIXME: delete
 	rdrs[1].Name = "blue-lower"  // FIXME: delete

@@ -39,8 +39,7 @@ func TestCache(t *testing.T) {
 	require.Nil(t, cache.Err())
 	require.Equal(t, -1, cache.ErrAt())
 
-	r, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r := cache.NewReader(ctx)
 
 	// We'll read half the bytes.
 	buf := make([]byte, 4)
@@ -63,7 +62,7 @@ func TestCache(t *testing.T) {
 	}
 
 	require.Panics(t, func() {
-		_, _ = cache.NewReader(ctx)
+		_ = cache.NewReader(ctx)
 	}, "should panic because cache is already sealed")
 
 	// Read the remaining bytes.
@@ -117,10 +116,9 @@ func TestCache(t *testing.T) {
 
 func TestReaderAlreadyClosed(t *testing.T) {
 	cache := New(strings.NewReader(anything))
-	r, err := cache.NewReader(context.Background())
-	require.NoError(t, err)
+	r := cache.NewReader(context.Background())
 	buf := make([]byte, 4)
-	_, err = r.Read(buf)
+	_, err := r.Read(buf)
 	require.NoError(t, err)
 
 	// After closing, we should get ErrAlreadyClosed if we try to read again.
@@ -134,9 +132,7 @@ func TestSingleReaderImmediateSeal(t *testing.T) {
 	t.Parallel()
 
 	cache := New(strings.NewReader(anything))
-	r, err := cache.NewReader(context.Background())
-	require.NoError(t, err)
-
+	r := cache.NewReader(context.Background())
 	cache.Seal()
 
 	gotData, err := io.ReadAll(r)
@@ -170,9 +166,7 @@ func TestReader_NoSeal(t *testing.T) {
 	t.Parallel()
 
 	cache := New(strings.NewReader(anything))
-	r, err := cache.NewReader(context.Background())
-	require.NoError(t, err)
-
+	r := cache.NewReader(context.Background())
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, anything, string(gotData))
@@ -197,7 +191,7 @@ func TestCache_File(t *testing.T) {
 	recorder := &rcRecorder{r: f}
 	cache := New(recorder)
 
-	r, err := cache.NewReader(ctx)
+	r := cache.NewReader(ctx)
 	require.NoError(t, err)
 
 	cache.Seal()
@@ -224,7 +218,7 @@ func TestCache_File_Concurrent(t *testing.T) {
 
 	cache := New(f)
 	for i := 0; i < numG; i++ {
-		r, err := cache.NewReader(ctx)
+		r := cache.NewReader(ctx)
 		require.NoError(t, err)
 
 		go func(r *Reader) {
@@ -272,8 +266,7 @@ func TestCache_File_Concurrent2(t *testing.T) {
 
 	rdrs := make([]*Reader, numG)
 	for i := 0; i < numG; i++ {
-		rdrs[i], err = cache.NewReader(ctx)
-		require.NoError(t, err)
+		rdrs[i] = cache.NewReader(ctx)
 	}
 
 	// This time, we'll seal in the middle of the reads.
@@ -312,14 +305,12 @@ func TestSeal_AlreadySealed(t *testing.T) {
 
 	ctx := context.Background()
 	cache := New(strings.NewReader(anything))
-	r, err := cache.NewReader(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, r)
+	_ = cache.NewReader(ctx)
 
 	cache.Seal()
 
 	require.Panics(t, func() {
-		_, _ = cache.NewReader(ctx)
+		_ = cache.NewReader(ctx)
 	}, "should panic because cache is already sealed")
 }
 
@@ -330,14 +321,13 @@ func TestSeal_AfterRead(t *testing.T) {
 
 	ctx := context.Background()
 	cache := New(strings.NewReader(want))
-	r1, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r1 := cache.NewReader(ctx)
 	require.NotNil(t, r1)
 	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
 	require.Equal(t, want, string(gotData1))
 
-	r2, err := cache.NewReader(ctx)
+	r2 := cache.NewReader(ctx)
 	require.NoError(t, err)
 
 	cache.Seal()
@@ -360,8 +350,7 @@ func TestContextAwareness(t *testing.T) {
 		cancel(wantErr)
 	})
 
-	r, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r := cache.NewReader(ctx)
 	_, gotErr := io.ReadAll(r)
 	require.Error(t, gotErr)
 	require.True(t, errors.Is(gotErr, wantErr))
@@ -376,15 +365,13 @@ func TestErrorHandling(t *testing.T) {
 
 	cache := New(newErrorAfterNReader(errAfterN, wantErr))
 
-	r1, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r1 := cache.NewReader(ctx)
 	gotData1, err := io.ReadAll(r1)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
 	require.Equal(t, errAfterN, len(gotData1))
 
-	r2, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r2 := cache.NewReader(ctx)
 	gotData2, err := io.ReadAll(r2)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
@@ -400,8 +387,7 @@ func TestClose(t *testing.T) {
 	recorder := &rcRecorder{r: strings.NewReader(anything)}
 	cache := New(recorder)
 
-	r1, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r1 := cache.NewReader(ctx)
 
 	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
@@ -409,8 +395,7 @@ func TestClose(t *testing.T) {
 	require.NoError(t, r1.Close())
 	require.Equal(t, 0, recorder.closeCount)
 
-	r2, err := cache.NewReader(ctx)
-	require.NoError(t, err)
+	r2 := cache.NewReader(ctx)
 	cache.Seal()
 
 	gotData2, err := io.ReadAll(r2)

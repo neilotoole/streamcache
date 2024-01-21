@@ -47,10 +47,6 @@ import (
 	"github.com/neilotoole/fifomu"
 )
 
-//// ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
-//// the source is already sealed.
-//var ErrAlreadySealed = errors.New("cache is already sealed")
-
 // ErrAlreadyClosed is returned by Reader.Read if the reader is
 // already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
@@ -116,7 +112,7 @@ type Cache struct {
 }
 
 // New returns a new Cache that reads from src. Use Cache.NewReader
-// to create read from src.
+// to read from src.
 func New(src io.Reader) *Cache {
 	c := &Cache{
 		src:   src,
@@ -128,12 +124,13 @@ func New(src io.Reader) *Cache {
 }
 
 // NewReader returns a new Reader for Cache. If ctx is non-nil, it is
-// checked for cancellation at the start of Reader.Read.
+// checked for cancellation at the start of Reader.Read (and possibly
+// at some other checkpoints).
 //
 // It is the caller's responsibility to close the returned Reader.
 //
 // NewReader panics if c is already sealed via Cache.Seal.
-func (c *Cache) NewReader(ctx context.Context) (*Reader, error) {
+func (c *Cache) NewReader(ctx context.Context) *Reader {
 	c.cMu.Lock()
 	defer c.cMu.Unlock()
 
@@ -147,7 +144,7 @@ func (c *Cache) NewReader(ctx context.Context) (*Reader, error) {
 		readFn: c.readMain,
 	}
 	c.rdrs = append(c.rdrs, r)
-	return r, nil
+	return r
 }
 
 // readFunc is the type of the Reader.readFn field.
@@ -538,13 +535,13 @@ type Reader struct {
 
 // Read implements io.Reader. If a non-nil context was provided to Cache.NewReader
 // to create this Reader, that context is checked at the start of each call
-// to Read (and at some other checkpoints): if the context has canceled, Read
-// will return the context's error via context.Cause. Note however that Read can
-// still block on reading from the Cache source. If this reader has already been
-// closed via Reader.Close, Read will return ErrAlreadyClosed. If a previous
-// invocation of Read returned an error from the source, that error is returned.
-// Otherwise Read reads from Cache, which may return bytes from Cache's cache or
-// new bytes from the source, or a combination of both.
+// to Read (and possibly at some other checkpoints): if the context has
+// canceled, Read will return the context's error via context.Cause. Note
+// however that Read can still block on reading from the Cache source. If this
+// reader has already been closed via Reader.Close, Read will return ErrAlreadyClosed.
+// If a previous invocation of Read returned an error from the source, that
+// error is returned. Otherwise Read reads from Cache, which may return bytes
+// from Cache's cache or new bytes from the source, or a combination of both.
 func (r *Reader) Read(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

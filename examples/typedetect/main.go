@@ -54,7 +54,7 @@ func main() {
 	}
 
 	if os.ModeNamedPipe&fi.Mode() > 0 || fi.Size() > 0 {
-		// Input is from stdin
+		// Input is from stdin.
 		if len(os.Args) > 1 {
 			// If input is from stdin, then we don't want any args.
 			// E.g. `cat FILE | typedetect` is OK,
@@ -85,22 +85,13 @@ func main() {
 	}
 }
 
-// detectFunc is a function that detects the type of data on rc.
-// On success, the function returns a non-empty string, e.g. "json"
-// or "xml". On failure, the function returns empty string. The
-// function must close rc in either case.
-type detectFunc func(ctx context.Context, rc io.ReadCloser) (typ string)
-
 func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	detectors := []detectFunc{detectJSON, detectXML}
 
 	cache := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(detectors))
-	var err error
 	for i := range detectors {
-		if rdrs[i], err = cache.NewReader(ctx); err != nil {
-			return err
-		}
+		rdrs[i] = cache.NewReader(ctx)
 	}
 
 	detectionCh := make(chan string, len(detectors))
@@ -128,7 +119,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		// The cache can't be done until outputRdr is closed,
 		// which obviously hasn't happened yet, so this cache
 		// done scenario must be an error.
-		if err = cache.Err(); err != nil && !errors.Is(err, io.EOF) {
+		if err := cache.Err(); err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 	default:
@@ -152,17 +143,14 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	// previewRdr reads the content, prints the head and tail, each
 	// up to numPreviewLines lines.
-	previewRdr, err := cache.NewReader(ctx)
-	if err != nil {
-		return err
-	}
+	previewRdr := cache.NewReader(ctx)
 	defer previewRdr.Close()
 
 	// There will be no new readers after this point, so we can
 	// seal the cache. This results in previewRdr switching to
 	// reading directly from the source reader, as soon as it
 	// has exhausted the cache. This mode switch is transparent to
-	// the caller here of course; streamcache takes care of it.
+	// the caller of course; streamcache takes care of it.
 	cache.Seal()
 
 	// Scan and print up to numPreviewLines from input head.
@@ -178,13 +166,13 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		lineCount++
 	}
 
-	if err = sc.Err(); err != nil {
+	if err := sc.Err(); err != nil {
 		return err
 	}
 
 	// Use a channel as a sliding window / circular buffer of lines
-	// so that, at the end, we can print the tail of numPreviewLines,
-	// and just skip the stuff in the middle.
+	// so that, at the end, we can print the final numPreviewLines of
+	// the tail, and just skip the stuff in the middle.
 	window := make(chan string, numPreviewLines)
 	var line string
 	for sc.Scan() {
@@ -213,7 +201,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	skipCount := lineCount - len(window) - numPreviewLines
 	if skipCount > 0 {
-		fmt.Fprintln(out, colorize(ansiGreen, fmt.Sprintf("Skip %d line(s)", skipCount)+ellipsis))
+		fmt.Fprintln(out, colorize(ansiGreen, fmt.Sprintf("[Skipped %d lines]", skipCount)))
 	}
 
 	for line = range window {
@@ -225,33 +213,11 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// printPreviewLine prints a line of the input. It
-// truncates long lines at maxLineWidth and adds
-// an ellipsis...
-func printPreviewLine(out io.Writer, line string) {
-	if len(line) <= maxLineWidth {
-		fmt.Fprintln(out, colorize(ansiFaint, line))
-		return
-	}
-
-	fmt.Fprintln(out, colorize(ansiFaint, line[:maxLineWidth-3])+ellipsis)
-}
-
-var _ io.Reader = (*prompter)(nil)
-
-// prompter is an io.Reader that writes a prompt to out before
-// reading from in.
-type prompter struct {
-	in  io.Reader
-	out io.Writer
-}
-
-// Read implements io.Reader. It renders a prompt to out before
-// reading from in.
-func (pr *prompter) Read(p []byte) (n int, err error) {
-	fmt.Fprintln(pr.out, ansiFaint+"Enter text and press [RETURN]"+ansiReset)
-	return pr.in.Read(p)
-}
+// detectFunc is a function that detects the type of data on rc.
+// On success, the function returns a non-empty string, e.g. "json"
+// or "xml". On failure, the function returns empty string. The
+// function must close rc in either case.
+type detectFunc func(ctx context.Context, rc io.ReadCloser) (typ string)
 
 // detectJSON returns "json" if rc appears to contain JSON, otherwise
 // it returns empty string. It closes rc in either case.
@@ -260,7 +226,7 @@ func detectJSON(ctx context.Context, rc io.ReadCloser) (typ string) {
 
 	dec := json.NewDecoder(rc)
 	var err error
-	for i := 0; i < tokenThreshold; i++ {
+	for i := 0; i < tokenDetectThreshold; i++ {
 		select {
 		case <-ctx.Done():
 			return ""
@@ -281,7 +247,7 @@ func detectXML(ctx context.Context, rc io.ReadCloser) (typ string) {
 
 	dec := xml.NewDecoder(rc)
 	var err error
-	for i := 0; i < tokenThreshold; i++ {
+	for i := 0; i < tokenDetectThreshold; i++ {
 		select {
 		case <-ctx.Done():
 			return ""
@@ -296,15 +262,38 @@ func detectXML(ctx context.Context, rc io.ReadCloser) (typ string) {
 }
 
 const (
-	tokenThreshold  = 10
+	// tokenDetectThreshold is the number of tokens to be read
+	// successfully before we consider the type to be detected.
+	tokenDetectThreshold = 10
+
+	// numPreviewLines is the number of preview lines to print from the
+	// head and tail of the input. So, the total number of lines printed
+	// is numPreviewLines*2.
 	numPreviewLines = 5
-	maxLineWidth    = 80
-	ansiReset       = "\033[0m" // terminal colors
-	ansiFaint       = "\033[2m"
-	ansiRed         = "\033[31m"
-	ansiGreen       = "\033[32m"
-	ellipsis        = ansiGreen + "…" + ansiReset
+
+	// maxPreviewLineWidth is the width at which a preview line
+	// is truncate before printing.
+	maxPreviewLineWidth = 80
+
+	// terminal colors
+	ansiReset = "\033[0m"
+	ansiFaint = "\033[2m"
+	ansiRed   = "\033[31m"
+	ansiGreen = "\033[32m"
 )
+
+// printPreviewLine prints a line of the input to out. Long lines are
+// truncated at maxPreviewLineWidth and have an ellipsis added.
+func printPreviewLine(out io.Writer, line string) {
+	const ellipsis = ansiGreen + "…" + ansiReset
+
+	if len(line) <= maxPreviewLineWidth {
+		fmt.Fprintln(out, colorize(ansiFaint, line))
+		return
+	}
+
+	fmt.Fprintln(out, colorize(ansiFaint, line[:maxPreviewLineWidth-3])+ellipsis)
+}
 
 func colorize(ansi, s string) string {
 	return ansi + s + ansiReset
