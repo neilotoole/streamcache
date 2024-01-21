@@ -3,6 +3,8 @@ package streamcache
 // logger.go contains temporary logging functionality
 // during development. It will be removed before release.
 
+// FIXME: delete logger.go before release.
+
 import (
 	"fmt"
 	"os"

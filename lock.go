@@ -1,5 +1,7 @@
 package streamcache
 
+// FIXME: delete this lock functions before release.
+
 func (c *Cache) readLock(r *Reader) {
 	logf(r, "read lock: before")
 	c.cMu.RLock()
