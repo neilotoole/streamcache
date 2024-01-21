@@ -8,7 +8,7 @@ func ReaderOffset(r *Reader) int {
 	return r.offset
 }
 
-// CacheData returns c's internal cache byte slice.
-func CacheData(c *Cache) []byte {
+// CacheInternal returns c's internal cache byte slice.
+func CacheInternal(c *Cache) []byte {
 	return c.cache
 }

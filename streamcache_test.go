@@ -51,7 +51,7 @@ func TestCache(t *testing.T) {
 	require.Equal(t, "anyt", string(buf))
 	require.Equal(t, 4, streamcache.ReaderOffset(r))
 	require.Equal(t, 4, cache.Size())
-	require.Equal(t, 4, len(streamcache.CacheData(cache)))
+	require.Equal(t, 4, len(streamcache.CacheInternal(cache)))
 
 	// Seal the source; after this, no more readers can be created.
 	cache.Seal()
