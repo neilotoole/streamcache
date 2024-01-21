@@ -74,9 +74,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	rdrs[1].Name = "blue-lower"  // FIXME: delete
 	rdrs[2].Name = "green-title" // FIXME: delete
 
-	if err = cache.Seal(); err != nil {
-		return err
-	}
+	cache.Seal()
 
 	errCh := make(chan error, 1)
 	for i := range transforms {

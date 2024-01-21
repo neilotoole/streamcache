@@ -163,9 +163,8 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	// reading directly from the source reader, as soon as it
 	// has exhausted the cache. This mode switch is transparent to
 	// the caller here of course; streamcache takes care of it.
-	if err = cache.Seal(); err != nil {
-		return err
-	}
+	cache.Seal()
+
 	// Scan and print up to numPreviewLines from input head.
 	var lineCount int
 	sc := bufio.NewScanner(previewRdr)

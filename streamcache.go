@@ -47,9 +47,9 @@ import (
 	"github.com/neilotoole/fifomu"
 )
 
-// ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
-// the source is already sealed.
-var ErrAlreadySealed = errors.New("cache is already sealed")
+//// ErrAlreadySealed is returned by Cache.NewReader and Cache.Seal if
+//// the source is already sealed.
+//var ErrAlreadySealed = errors.New("cache is already sealed")
 
 // ErrAlreadyClosed is returned by Reader.Read if the reader is
 // already closed.
@@ -127,16 +127,18 @@ func New(src io.Reader) *Cache {
 	return c
 }
 
-// NewReader returns a new Reader for Cache. If Cache is already
-// sealed, ErrAlreadySealed is returned. If ctx is non-nil, it is
+// NewReader returns a new Reader for Cache. If ctx is non-nil, it is
 // checked for cancellation at the start of Reader.Read.
+//
 // It is the caller's responsibility to close the returned Reader.
+//
+// NewReader panics if c is already sealed via Cache.Seal.
 func (c *Cache) NewReader(ctx context.Context) (*Reader, error) {
 	c.cMu.Lock()
 	defer c.cMu.Unlock()
 
 	if c.sealed {
-		return nil, ErrAlreadySealed
+		panic("Invoked Cache.NewReader on sealed Cache")
 	}
 
 	r := &Reader{
@@ -474,21 +476,19 @@ func (c *Cache) close(r *Reader) error {
 // Seal is called to indicate that no more calls to NewReader are permitted.
 // If there are no unclosed readers when Seal is invoked, the Cache.Done
 // channel is closed, and the Cache is considered finished. Subsequent
-// invocations will return ErrAlreadySealed.
-func (c *Cache) Seal() error {
+// invocations are no-op.
+func (c *Cache) Seal() {
 	c.cMu.Lock()
 	defer c.cMu.Unlock()
 
 	if c.sealed {
-		return ErrAlreadySealed
+		return
 	}
 
 	c.sealed = true
 	if len(c.rdrs) == 0 {
 		close(c.done)
 	}
-
-	return nil
 }
 
 // Sealed returns true if Seal has been invoked.
@@ -500,8 +500,8 @@ func (c *Cache) Sealed() bool {
 
 var _ io.ReadCloser = (*Reader)(nil)
 
-// Reader is returned by Cache.NewReader. It is the responsibility of the
-// caller to close Reader.
+// Reader is returned by Cache.NewReader. Reader implements io.ReadCloser: it
+// is the responsibility of the caller to close Reader.
 type Reader struct {
 	// ctx is the context provided to Cache.NewReader. If non-nil,
 	// every invocation of Reader.Read checks ctx for cancellation
