@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/net/html"
-
 	"github.com/neilotoole/sq/libsq/core/lg/devlog"
 
 	"github.com/neilotoole/streamcache"
@@ -57,15 +55,16 @@ func main() {
 	defer logFile.Close()
 	log := slog.New(devlog.NewHandler(logFile, slog.LevelDebug))
 
+	// Determine if input is coming from stdin (e.g. `cat FILE | typedetect`),
+	// or via args (e.g. `typedetect FILE`).
+	var in *os.File
 	fi, err := os.Stdin.Stat()
 	if err != nil {
 		printErr(err)
 		return
 	}
 
-	var in *os.File
-	mode := fi.Mode()
-	if os.ModeNamedPipe&mode > 0 || fi.Size() > 0 {
+	if os.ModeNamedPipe&fi.Mode() > 0 || fi.Size() > 0 {
 		if len(os.Args) > 1 {
 			err = usageErr
 			printErr(err)
@@ -85,28 +84,6 @@ func main() {
 		}
 		defer in.Close()
 	}
-	//
-	//var isStdin bool
-	//switch {
-	//case :
-	//
-	//	isStdin = true
-	//default:
-	//	isStdin = false
-	//}
-	//
-	//// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/sqio.html"
-	//// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json"
-	//const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.jsonl"
-	//
-	//in, err := os.Open(inFileName)
-	//// in, err := os.Open("/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json")
-	//if err != nil {
-	//	printErr(err)
-	//	return
-	//}
-
-	// fmt.Fprintln(os.Stdout, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
 
 	if err = exec(ctx, log, in, os.Stdout); err != nil {
 		printErr(err)
@@ -120,9 +97,9 @@ func main() {
 type detectFunc func(ctx context.Context, rc io.ReadCloser) (typ string)
 
 func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) error {
-	detectors := []detectFunc{detectJSON, detectXML, detectHTML}
+	detectors := []detectFunc{detectJSON, detectXML}
 
-	cache := streamcache.New(log, in)
+	cache := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(detectors))
 	var err error
 	for i := range detectors {
@@ -322,36 +299,6 @@ func detectXML(ctx context.Context, rc io.ReadCloser) (typ string) {
 	}
 
 	return "xml"
-}
-
-// detectJSON returns "html" if rc appears to contain HTML, otherwise
-// it returns empty string. It closes rc in either case.
-func detectHTML(ctx context.Context, rc io.ReadCloser) (typ string) {
-	defer rc.Close()
-
-	dec := html.NewTokenizer(rc)
-
-	for i := 0; i < tokenThreshold; i++ {
-		select {
-		case <-ctx.Done():
-			return ""
-		default:
-		}
-
-		if dec.Next() == html.ErrorToken {
-			return ""
-		}
-		_ = dec.Token()
-		if dec.Err() != nil {
-			return ""
-		}
-	}
-
-	if dec.Err() != nil {
-		return ""
-	}
-
-	return "html"
 }
 
 const (
