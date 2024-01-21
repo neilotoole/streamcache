@@ -1,3 +1,11 @@
+// Package main provides the "multicase" example CLI that reads from
+// stdin and outputs each line in lower, upper, and title case. Usage:
+//
+//		$ cat FILE | multicase
+//	 # Or interactive mode (user enters input)
+//		$ multicase
+//
+// "multicase" exists to demonstrate use of neilotoole/streamcache.
 package main
 
 import (
@@ -6,25 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
-
-	"github.com/neilotoole/sq/libsq/core/lg/devlog"
 
 	"github.com/neilotoole/streamcache"
 )
-
-func getLogFile() (*os.File, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	name := filepath.Join(home, "multicase.log")
-	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
-}
 
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
@@ -44,22 +39,14 @@ func main() {
 		cancelFn()
 	}()
 
-	f, err := getLogFile()
-	if err != nil {
-		printErr(err)
-		return
-	}
-	defer f.Close()
-	log := slog.New(devlog.NewHandler(f, slog.LevelDebug))
-
 	fmt.Fprintln(os.Stdin, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
 
-	if err = exec(ctx, log, os.Stdin, os.Stdout); err != nil {
+	if err = exec(ctx, os.Stdin, os.Stdout); err != nil {
 		printErr(err)
 	}
 }
 
-func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) error {
+func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	toUpper := func(s string) string {
 		return colorize(ansiRed, strings.ToUpper(s))
 	}
@@ -74,7 +61,7 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
-	// cache := streamcache.New(log, &prompter{in: in, out: out})
+	// cache := streamcache.New(log, &prompter{in: in, out: out}) // FIXME: delete
 	cache := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
@@ -83,9 +70,9 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 			return err
 		}
 	}
-	rdrs[0].Name = "red-upper"
-	rdrs[1].Name = "blue-lower"
-	rdrs[2].Name = "green-title"
+	rdrs[0].Name = "red-upper"   // FIXME: delete
+	rdrs[1].Name = "blue-lower"  // FIXME: delete
+	rdrs[2].Name = "green-title" // FIXME: delete
 
 	if err = cache.Seal(); err != nil {
 		return err

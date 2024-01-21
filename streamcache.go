@@ -217,7 +217,7 @@ TOP:
 			// has the write lock. There's only a tiny window where the
 			// write lock is held, so our naive strategy here is just
 			// to go back to the top.
-			c.Infof(r, "try read lock failed; going back to TOP.")
+			logf(r, "try read lock failed; going back to TOP.")
 			goto TOP
 		}
 
@@ -273,9 +273,9 @@ TOP:
 	}
 
 	// OK, this time, we're REALLY going to read from src.
-	c.Infof(r, "Entering src.Read")
+	logf(r, "Entering src.Read")
 	n, err = c.src.Read(p)
-	c.Infof(r, "Returned from src.Read: n=%d, err=%v", n, err)
+	logf(r, "Returned from src.Read: n=%d, err=%v", n, err)
 
 	if n == 0 && err == nil {
 		// For this special case, there's no need to update the cache,

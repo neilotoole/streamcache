@@ -1,3 +1,13 @@
+// Package main provides the "typedetect" example CLI that detects the type
+// of a data file, e.g. JSON, XML, etc. Usage:
+//
+//	$ typedetect FILE
+//	$ cat FILE | typedetect
+//
+// The tool prints the detected type, and a preview of the
+// file contents.
+//
+// "typedetect" exists to demonstrate use of neilotoole/streamcache.
 package main
 
 import (
@@ -8,26 +18,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/neilotoole/sq/libsq/core/lg/devlog"
-
 	"github.com/neilotoole/streamcache"
 )
-
-func getLogFile() (*os.File, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	name := filepath.Join(home, "typedetect.log")
-	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
-}
 
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
@@ -47,16 +44,8 @@ func main() {
 		cancelFn()
 	}()
 
-	logFile, err := getLogFile()
-	if err != nil {
-		printErr(err)
-		return
-	}
-	defer logFile.Close()
-	log := slog.New(devlog.NewHandler(logFile, slog.LevelDebug))
-
-	// Determine if input is coming from stdin (e.g. `cat FILE | typedetect`),
-	// or via args (e.g. `typedetect FILE`).
+	// Determine if input is coming from stdin (`cat FILE | typedetect`),
+	// or via args (`typedetect FILE`).
 	var in *os.File
 	fi, err := os.Stdin.Stat()
 	if err != nil {
@@ -65,13 +54,18 @@ func main() {
 	}
 
 	if os.ModeNamedPipe&fi.Mode() > 0 || fi.Size() > 0 {
+		// Input is from stdin
 		if len(os.Args) > 1 {
+			// If input is from stdin, then we don't want any args.
+			// E.g. `cat FILE | typedetect` is OK,
+			// but `cat FILE | typedetect FILE` is not.
 			err = usageErr
 			printErr(err)
 			return
 		}
 		in = os.Stdin
 	} else {
+		// Input is from args, e.g. `typedetect FILE`.
 		if len(os.Args) != 2 || (os.Args[1] == "") {
 			err = usageErr
 			printErr(err)
@@ -85,7 +79,8 @@ func main() {
 		defer in.Close()
 	}
 
-	if err = exec(ctx, log, in, os.Stdout); err != nil {
+	// CLI is set up, now we can get on with the work.
+	if err = exec(ctx, in, os.Stdout); err != nil {
 		printErr(err)
 	}
 }
@@ -96,7 +91,7 @@ func main() {
 // function must close rc in either case.
 type detectFunc func(ctx context.Context, rc io.ReadCloser) (typ string)
 
-func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) error {
+func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	detectors := []detectFunc{detectJSON, detectXML}
 
 	cache := streamcache.New(in)
