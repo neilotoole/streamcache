@@ -208,7 +208,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		printPreviewLine(out, line)
 	}
 
-	summary := fmt.Sprintf("%d lines [%d bytes]", lineCount, cache.Size())
+	summary := fmt.Sprintf("%d lines (%d bytes)", lineCount, cache.Size())
 	fmt.Fprintln(out, colorize(ansiGreen, summary))
 	return nil
 }
