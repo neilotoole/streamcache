@@ -57,16 +57,54 @@ func main() {
 	defer logFile.Close()
 	log := slog.New(devlog.NewHandler(logFile, slog.LevelDebug))
 
-	// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/sqio.html"
-	// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json"
-	const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.jsonl"
-
-	in, err := os.Open(inFileName)
-	// in, err := os.Open("/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json")
+	fi, err := os.Stdin.Stat()
 	if err != nil {
 		printErr(err)
 		return
 	}
+
+	var in *os.File
+	mode := fi.Mode()
+	if os.ModeNamedPipe&mode > 0 || fi.Size() > 0 {
+		if len(os.Args) > 1 {
+			err = usageErr
+			printErr(err)
+			return
+		}
+		in = os.Stdin
+	} else {
+		if len(os.Args) != 2 || (os.Args[1] == "") {
+			err = usageErr
+			printErr(err)
+			return
+		}
+		in, err = os.Open(os.Args[1])
+		if err != nil {
+			printErr(err)
+			return
+		}
+		defer in.Close()
+	}
+	//
+	//var isStdin bool
+	//switch {
+	//case :
+	//
+	//	isStdin = true
+	//default:
+	//	isStdin = false
+	//}
+	//
+	//// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/sqio.html"
+	//// const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json"
+	//const inFileName = "/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.jsonl"
+	//
+	//in, err := os.Open(inFileName)
+	//// in, err := os.Open("/Users/neilotoole/work/sq/streamcache/examples/typedetect/actor.json")
+	//if err != nil {
+	//	printErr(err)
+	//	return
+	//}
 
 	// fmt.Fprintln(os.Stdout, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
 
@@ -124,6 +162,8 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 	default:
 	}
 
+	// In theory multiple detectors could succeed, so we
+	// gather all the results and print them.
 	var detectedTypes []string
 	for typ := range detectionCh {
 		detectedTypes = append(detectedTypes, typ)
@@ -131,6 +171,8 @@ func exec(ctx context.Context, log *slog.Logger, in io.Reader, out io.Writer) er
 
 	if len(detectedTypes) == 0 {
 		fmt.Fprintln(out, colorize(ansiRed, "typedetect: unable to detect type"))
+		// Even if we can't detect the type, we still continue below
+		// tp print the head and tail preview.
 	} else {
 		fmt.Fprint(out,
 			colorize(ansiGreen, "typedetect: "+strings.Join(detectedTypes, ", "))+"\n")
@@ -328,5 +370,7 @@ func colorize(ansi, s string) string {
 }
 
 func printErr(err error) {
-	fmt.Fprintln(os.Stderr, colorize(ansiRed, "error: "+err.Error()))
+	fmt.Fprintln(os.Stderr, colorize(ansiRed, "typedetect: error: "+err.Error()))
 }
+
+var usageErr = errors.New("usage: `typedetect FILE` or `cat FILE | typedetect`")
