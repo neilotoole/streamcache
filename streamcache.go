@@ -248,18 +248,14 @@ TOP:
 	// If we've gotten this far, we have the src lock, but not the
 	// read or write lock. We're here because there was nothing new in
 	// the cache for r the last time we checked. However, it's possible
-	// that another reader has since updated the cache, so we check again.
+	// that another reader has since updated the cache, so we check again,
+	// and also check if a read error has occurred.
 
 	// We don't need to acquire the read lock, because we already have the
 	// src lock, and only the src lock holder ever acquires the write lock,
 	// so it's safe to proceed.
-	if s.size > offset {
+	if s.size > offset || (s.readErr != nil && offset+len(p) >= s.size) {
 		// There's some new stuff in the cache. Return it.
-		n, err = s.fillFromCache(p, offset)
-		s.srcUnlock(r)
-		return n, err
-	} else if s.readErr != nil && offset+len(p) >= s.size {
-		// r would encounter an error, so we can't read from src anyway.
 		n, err = s.fillFromCache(p, offset)
 		s.srcUnlock(r)
 		return n, err
