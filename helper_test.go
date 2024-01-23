@@ -165,16 +165,13 @@ func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	}
 }
 
-func enableLogging(t *testing.T) { //nolint:unused
-	t.Setenv("STREAMCACHE_LOG", "true")
-}
-
 func requireTotalBlocks(t *testing.T, s *streamcache.Stream) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
 
+	failErr := errors.New("fail")
+	ctx, cancel := context.WithCancelCause(context.Background())
 	time.AfterFunc(time.Millisecond*10, func() {
-		cancel()
+		cancel(failErr)
 	})
 
 	var (
@@ -190,16 +187,16 @@ func requireTotalBlocks(t *testing.T, s *streamcache.Stream) {
 
 	<-wait
 	require.Error(t, err)
-	require.True(t, errors.Is(err, context.Canceled))
+	require.True(t, errors.Is(err, failErr))
 	require.Equal(t, 0, size)
 }
 
 func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
 
+	ctx, cancel := context.WithCancelCause(context.Background())
 	time.AfterFunc(time.Millisecond*10, func() {
-		cancel()
+		cancel(errors.New("fail"))
 	})
 
 	var (
@@ -215,4 +212,9 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	<-wait
 	require.NoError(t, err)
 	require.Equal(t, want, size)
+}
+
+// FIXME: delete enableLogging
+func enableLogging(t *testing.T) { //nolint:unused
+	t.Setenv("STREAMCACHE_LOG", "true")
 }
