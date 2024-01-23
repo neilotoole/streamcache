@@ -128,7 +128,8 @@ func New(src io.Reader) *Stream {
 //
 // It is the caller's responsibility to close the returned Reader.
 //
-// NewReader panics if s is already sealed via Stream.Seal.
+// NewReader panics if s is already sealed via Stream.Seal (but note that
+// you can first test via Stream.Sealed).
 func (s *Stream) NewReader(ctx context.Context) *Reader {
 	s.cMu.Lock()
 	defer s.cMu.Unlock()
@@ -299,7 +300,7 @@ TOP:
 	// locks, and return.
 	s.writeUnlock(r)
 	s.srcUnlock(r)
-	runtime.Gosched() // FIXME: delete runtime.Gosched call.
+	runtime.Gosched()
 	return n, err
 }
 
