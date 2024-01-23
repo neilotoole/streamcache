@@ -1,9 +1,9 @@
 // Package main provides the "multicase" example CLI that reads from
 // stdin and outputs each line in lower, upper, and title case. Usage:
 //
-//		$ cat FILE | multicase
-//	 # Or interactive mode (user enters input)
-//		$ multicase
+//	$ cat FILE | multicase
+//	# Or interactive mode (user enters input)
+//	$ multicase
 //
 // "multicase" exists to demonstrate use of neilotoole/streamcache.
 package main
@@ -61,18 +61,18 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
-	// cache := streamcache.New(log, &prompter{in: in, out: out}) // FIXME: delete
-	cache := streamcache.New(in)
+	// s := streamcache.New(log, &prompter{in: in, out: out}) // FIXME: delete
+	s := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
 	for i := range rdrs {
-		rdrs[i] = cache.NewReader(ctx)
+		rdrs[i] = s.NewReader(ctx)
 	}
 	rdrs[0].Name = "red-upper"   // FIXME: delete
 	rdrs[1].Name = "blue-lower"  // FIXME: delete
 	rdrs[2].Name = "green-title" // FIXME: delete
 
-	cache.Seal()
+	s.Seal()
 
 	errCh := make(chan error, 1)
 	for i := range transforms {
@@ -107,8 +107,8 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	case <-ctx.Done():
 		err = ctx.Err()
 	case err = <-errCh:
-	case <-cache.ReadersDone():
-		err = cache.Err()
+	case <-s.ReadersDone():
+		err = s.Err()
 	}
 
 	if errors.Is(err, io.EOF) {
@@ -146,5 +146,5 @@ const (
 )
 
 func printErr(err error) {
-	fmt.Fprintln(os.Stderr, colorize(ansiRed, "error: "+err.Error()))
+	fmt.Fprintln(os.Stderr, colorize(ansiRed, "multicase: error: "+err.Error()))
 }

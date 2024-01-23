@@ -57,7 +57,7 @@ func main() {
 		// Input is from stdin.
 		if len(os.Args) > 1 {
 			// If input is from stdin, then we don't want any args.
-			// E.g. `cat FILE | typedetect` is OK,
+			// E.g. `cat FILE | typedetect` is ok,
 			// but `cat FILE | typedetect FILE` is not.
 			err = usageErr
 			printErr(err)
@@ -88,10 +88,10 @@ func main() {
 func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	detectors := []detectFunc{detectJSON, detectXML}
 
-	cache := streamcache.New(in)
+	s := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(detectors))
 	for i := range detectors {
-		rdrs[i] = cache.NewReader(ctx)
+		rdrs[i] = s.NewReader(ctx)
 	}
 
 	detectionCh := make(chan string, len(detectors))
@@ -115,11 +115,11 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-cache.ReadersDone():
-		// The cache can't be done until outputRdr is closed,
-		// which obviously hasn't happened yet, so this cache
+	case <-s.ReadersDone():
+		// The stream can't be done until outputRdr is closed,
+		// which obviously hasn't happened yet, so this stream
 		// done scenario must be an error.
-		if err := cache.Err(); err != nil && !errors.Is(err, io.EOF) {
+		if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 	default:
@@ -143,15 +143,15 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	// previewRdr reads the content, prints the head and tail, each
 	// up to numPreviewLines lines.
-	previewRdr := cache.NewReader(ctx)
+	previewRdr := s.NewReader(ctx)
 	defer previewRdr.Close()
 
 	// There will be no new readers after this point, so we can
-	// seal the cache. This results in previewRdr switching to
-	// reading directly from the source reader, as soon as it
-	// has exhausted the cache. This mode switch is transparent to
-	// the caller of course; streamcache takes care of it.
-	cache.Seal()
+	// seal the stream. This results in previewRdr switching to
+	// reading directly from the source reader, as soon as it has
+	// exhausted the stream's cache. This mode switch is transparent
+	// to the caller of course; streamcache takes care of it.
+	s.Seal()
 
 	// Scan and print up to numPreviewLines from input head.
 	var lineCount int
@@ -208,7 +208,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		printPreviewLine(out, line)
 	}
 
-	summary := fmt.Sprintf("%d lines (%d bytes)", lineCount, cache.Size())
+	summary := fmt.Sprintf("%d lines (%d bytes)", lineCount, s.Size())
 	fmt.Fprintln(out, colorize(ansiGreen, summary))
 	return nil
 }
