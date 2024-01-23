@@ -258,6 +258,11 @@ TOP:
 		n, err = s.fillFromCache(p, offset)
 		s.srcUnlock(r)
 		return n, err
+	} else if s.readErr != nil && offset+len(p) >= s.size {
+		// r would encounter an error, so we can't read from src anyway.
+		n, err = s.fillFromCache(p, offset)
+		s.srcUnlock(r)
+		return n, err
 	}
 
 	// We're almost ready to read from src. Because src read is potentially
