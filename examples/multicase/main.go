@@ -107,7 +107,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	case <-ctx.Done():
 		err = ctx.Err()
 	case err = <-errCh:
-	case <-cache.Done():
+	case <-cache.ReadersDone():
 		err = cache.Err()
 	}
 

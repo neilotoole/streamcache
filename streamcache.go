@@ -1,10 +1,4 @@
-// Package streamcache addresses an arcane scenario: multiple readers
-// want to sample the start of an input stream (from an io.Reader),
-// which involves caching, but after the samplers are satisfied,
-// there's no need to maintain that cache and its memory overhead
-// for the remainder of the read.
-//
-// Package streamcache implements a cache  mechanism that allows
+// Package streamcache implements a cache mechanism that allows
 // multiple callers to read some or all of the contents of a
 // source reader, while only reading from the source reader once.
 //
@@ -22,19 +16,19 @@
 // After that process, let's say we want to dump out the entire contents
 // of the input.
 //
-// Package streamcache provides a facility to create a Cache from an
-// underlying io.Reader (os.Stdin in this scenario), and spawn multiple
+// Package streamcache provides a facility to create a caching Stream from
+// an underlying io.Reader (os.Stdin in this scenario), and spawn multiple
 // readers, each of which can operate independently, in their own
 // goroutines if desired. The underlying source (again, os.Stdin in this
 // scenario) will only be read from once, but its data is available to
 // multiple readers, because that data is cached in memory.
 //
-// That is, until after Cache.Seal is invoked: when there's only one final
+// That is, until after Stream.Seal is invoked: when there's only one final
 // reader left, the cache is discarded, and the final reader reads directly
 // from the underlying source.
 //
 // The entrypoint to this package is streamcache.New, which returns a
-// new Cache instance, from which readers can be created via Cache.NewReader.
+// new Stream instance, from which readers can be created via Stream.NewReader.
 package streamcache
 
 import (
@@ -51,14 +45,14 @@ import (
 // already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
 
-// Cache mediates access to the bytes of an underlying source io.Reader.
-// Multiple callers can invoke Cache.NewReader to obtain a Reader, each of
+// Stream mediates access to the bytes of an underlying source io.Reader.
+// Multiple callers can invoke Stream.NewReader to obtain a Reader, each of
 // which can read the full contents of the source reader. Note that the
 // source is only read from once, and the returned bytes are cached
-// in memory. After Cache.Seal is invoked and readers are closed, the
+// in memory. After Stream.Seal is invoked and readers are closed, the
 // final reader discards the cache and reads directly from source for
 // the remaining bytes.
-type Cache struct {
+type Stream struct {
 	// src is the underlying reader from which bytes are read.
 	src io.Reader
 
@@ -67,12 +61,12 @@ type Cache struct {
 	// src is never read from again.
 	readErr error
 
-	// done is closed after the Cache is sealed and the last
-	// reader is closed. See Cache.Done.
-	done chan struct{}
+	// rdrsDoneCh is closed after the Stream is sealed and the last
+	// reader is closed. See Stream.ReadersDone.
+	rdrsDoneCh chan struct{}
 
 	// rdrs is the set of unclosed Reader instances created
-	// by Cache.NewReader. When a Reader is closed, it is removed
+	// by Stream.NewReader. When a Reader is closed, it is removed
 	// from this slice.
 	rdrs []*Reader
 
@@ -83,7 +77,7 @@ type Cache struct {
 	// srcMu guards concurrent access to reading from src. Note that it
 	// is not an instance of sync.Mutex, but instead fifomu.Mutex, which
 	// is a mutex whose Lock method returns the lock to callers in FIFO
-	// call order. This is important in Cache.readMain because, as implemented,
+	// call order. This is important in Stream.readMain because, as implemented,
 	// a reader could get the src lock on repeated calls, starving the other
 	// readers, which is a big problem if that greedy reader blocks
 	// on reading from src. Most likely our use of locks could be
@@ -93,7 +87,7 @@ type Cache struct {
 	// size is the count of bytes read from src.
 	size int
 
-	// cMu guards concurrent access to Cache's fields and methods.
+	// cMu guards concurrent access to Stream's fields and methods.
 	cMu sync.RWMutex
 
 	// sealed is set to true when Seal is called. When sealed is true,
@@ -111,39 +105,39 @@ type Cache struct {
 	// and src locks.
 }
 
-// New returns a new Cache that reads from src. Use Cache.NewReader
+// New returns a new Stream that reads from src. Use Stream.NewReader
 // to read from src.
-func New(src io.Reader) *Cache {
-	c := &Cache{
-		src:   src,
-		cache: make([]byte, 0),
-		done:  make(chan struct{}),
+func New(src io.Reader) *Stream {
+	c := &Stream{
+		src:        src,
+		cache:      make([]byte, 0),
+		rdrsDoneCh: make(chan struct{}),
 	}
 
 	return c
 }
 
-// NewReader returns a new Reader for Cache. If ctx is non-nil, it is
+// NewReader returns a new Reader for Stream. If ctx is non-nil, it is
 // checked for cancellation at the start of Reader.Read (and possibly
 // at some other checkpoints).
 //
 // It is the caller's responsibility to close the returned Reader.
 //
-// NewReader panics if c is already sealed via Cache.Seal.
-func (c *Cache) NewReader(ctx context.Context) *Reader {
-	c.cMu.Lock()
-	defer c.cMu.Unlock()
+// NewReader panics if c is already sealed via Stream.Seal.
+func (s *Stream) NewReader(ctx context.Context) *Reader {
+	s.cMu.Lock()
+	defer s.cMu.Unlock()
 
-	if c.sealed {
-		panic("Invoked Cache.NewReader on sealed Cache")
+	if s.sealed {
+		panic("Invoked Stream.NewReader on sealed Stream")
 	}
 
 	r := &Reader{
 		ctx:    ctx,
-		c:      c,
-		readFn: c.readMain,
+		c:      s,
+		readFn: s.readMain,
 	}
-	c.rdrs = append(c.rdrs, r)
+	s.rdrs = append(s.rdrs, r)
 	return r
 }
 
@@ -151,47 +145,47 @@ func (c *Cache) NewReader(ctx context.Context) *Reader {
 type readFunc func(r *Reader, p []byte, offset int) (n int, err error)
 
 var (
-	_ readFunc = (*Cache)(nil).readMain
-	_ readFunc = (*Cache)(nil).readSrcDirect
+	_ readFunc = (*Stream)(nil).readMain
+	_ readFunc = (*Stream)(nil).readSrcDirect
 )
 
-// readSrcDirect reads directly from Cache.src. The src's size is
-// incremented as bytes are read from src, and Cache.readErr is set if
+// readSrcDirect reads directly from Stream.src. The src's size is
+// incremented as bytes are read from src, and Stream.readErr is set if
 // src returns an error.
-func (c *Cache) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
-	n, err = c.src.Read(p)
+func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
+	n, err = s.src.Read(p)
 
 	// Get the write lock before updating c's fields.
-	c.cMu.Lock()
-	defer c.cMu.Unlock()
-	c.size += n
-	c.readErr = err
+	s.cMu.Lock()
+	defer s.cMu.Unlock()
+	s.size += n
+	s.readErr = err
 	return n, err
 }
 
-// readMain reads from Cache.cache and/or Cache.src. If Cache is sealed
+// readMain reads from Stream.cache and/or Stream.src. If Stream is sealed
 // and r is the final Reader, this method may switch r.readFn
-// to Cache.readSrcDirect, such that the remaining reads occur
-// directly against src, bypassing Cache.cache entirely.
-func (c *Cache) readMain(r *Reader, p []byte, offset int) (n int, err error) {
+// to Stream.readSrcDirect, such that the remaining reads occur
+// directly against src, bypassing Stream.cache entirely.
+func (s *Stream) readMain(r *Reader, p []byte, offset int) (n int, err error) {
 TOP:
-	c.readLock(r)
+	s.readLock(r)
 
-	if c.sealed && len(c.rdrs) == 1 {
+	if s.sealed && len(s.rdrs) == 1 {
 		// The cache is sealed, and this is the final reader.
 		// We can release the read lock (because this is the only possible
 		// reader), and delegate to readFinal.
-		c.readUnlock(r)
-		return c.readFinal(r, p, offset)
+		s.readUnlock(r)
+		return s.readFinal(r, p, offset)
 	}
 
-	if c.size > offset {
+	if s.size > offset {
 		// There's some data in the cache that can be returned.
 		// Even if the amount of data is not enough to fill p,
 		// we return what we can, and let the caller decide
 		// whether to read more.
-		n, err = c.fillFromCache(p, offset)
-		c.readUnlock(r)
+		n, err = s.fillFromCache(p, offset)
+		s.readUnlock(r)
 		return n, err
 	}
 
@@ -199,10 +193,10 @@ TOP:
 	// We're going to need to read from src.
 
 	// First we give up the read lock.
-	c.readUnlock(r)
+	s.readUnlock(r)
 
 	// And try to get the src lock.
-	if !c.srcTryLock(r) {
+	if !s.srcTryLock(r) {
 		// We couldn't get the src lock. Another reader has the src lock,
 		// and could be blocked on io. But, in the time since we released
 		// the read lock above, it's possible that more data was added to
@@ -210,7 +204,7 @@ TOP:
 		// so that r can catch up to the current cache state while some other
 		// reader holds src lock.
 
-		if !c.readTryLock(r) {
+		if !s.readTryLock(r) {
 			// We couldn't get the read lock, because another reader
 			// is updating the cache after having read from src, and thus
 			// has the write lock. There's only a tiny window where the
@@ -222,10 +216,10 @@ TOP:
 
 		// We've got the read lock, let's see if there's any fresh bytes
 		// in the cache that can be returned.
-		if c.size > offset {
+		if s.size > offset {
 			// Yup, there are bytes available in the cache. Return them.
-			n, err = c.fillFromCache(p, offset)
-			c.readUnlock(r)
+			n, err = s.fillFromCache(p, offset)
+			s.readUnlock(r)
 			return n, err
 		}
 
@@ -233,11 +227,11 @@ TOP:
 		// So, we really need to get more data from src.
 
 		// First we give up the read lock.
-		c.readUnlock(r)
+		s.readUnlock(r)
 
 		// And now we acquire the src lock so that we
 		// can read from src.
-		c.srcLock(r)
+		s.srcLock(r)
 	}
 
 	// FIXME: Should check for context cancellation after each lock?
@@ -250,10 +244,10 @@ TOP:
 	// We don't need to acquire the read lock, because we already have the
 	// src lock, and only the src lock holder ever acquires the write lock,
 	// so it's safe to proceed.
-	if c.size > offset {
+	if s.size > offset {
 		// There's some new stuff in the cache. Return it.
-		n, err = c.fillFromCache(p, offset)
-		c.srcUnlock(r)
+		n, err = s.fillFromCache(p, offset)
+		s.srcUnlock(r)
 		return n, err
 	}
 
@@ -265,7 +259,7 @@ TOP:
 	if r.ctx != nil {
 		select {
 		case <-r.ctx.Done():
-			c.srcUnlock(r)
+			s.srcUnlock(r)
 			return 0, context.Cause(r.ctx)
 		default:
 		}
@@ -273,28 +267,28 @@ TOP:
 
 	// OK, this time, we're REALLY going to read from src.
 	logf(r, "Entering src.Read")
-	n, err = c.src.Read(p)
+	n, err = s.src.Read(p)
 	logf(r, "Returned from src.Read: n=%d, err=%v", n, err)
 
 	if n == 0 && err == nil {
 		// For this special case, there's no need to update the cache,
 		// so we can just return now.
-		c.srcUnlock(r)
+		s.srcUnlock(r)
 		return 0, nil
 	}
 
 	// Now we need to update the cache, so we need to get the write lock.
-	c.writeLock(r)
-	c.readErr = err
+	s.writeLock(r)
+	s.readErr = err
 	if n > 0 {
-		c.size += n
-		c.cache = append(c.cache, p[:n]...)
+		s.size += n
+		s.cache = append(s.cache, p[:n]...)
 	}
 
 	// We're done updating the cache, so we can release the write and src
 	// locks, and return.
-	c.writeUnlock(r)
-	c.srcUnlock(r)
+	s.writeUnlock(r)
+	s.srcUnlock(r)
 	runtime.Gosched()
 	return n, err
 }
@@ -302,15 +296,15 @@ TOP:
 // fillFromCache copies bytes from the cache to p, starting at offset.
 // returning the number of bytes copied. If readErr is non-nil and we've
 // reached the value of readErrAt, readErr is returned.
-func (c *Cache) fillFromCache(p []byte, offset int) (n int, err error) {
-	n = copy(p, c.cache[offset:])
-	if c.readErr != nil && n+offset >= c.size {
-		err = c.readErr
+func (s *Stream) fillFromCache(p []byte, offset int) (n int, err error) {
+	n = copy(p, s.cache[offset:])
+	if s.readErr != nil && n+offset >= s.size {
+		err = s.readErr
 	}
 	return n, err
 }
 
-// readFinal is invoked by Cache.readMain when the Cache is sealed
+// readFinal is invoked by Stream.readMain when the Stream is sealed
 // and r is the final Reader. There are four possibilities for this read:
 //
 //  1. This read is entirely satisfied by the cache, with some
@@ -325,40 +319,40 @@ func (c *Cache) fillFromCache(p []byte, offset int) (n int, err error) {
 //  4. The read is an overlap of the cache and src, so we need to
 //     combine bytes from both. The subsequent read will be direct
 //     from src and thus cache can be nilled.
-func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
+func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	end := offset + len(p)
 	switch {
-	case end < c.size:
+	case end < s.size:
 		// The read can be satisfied entirely from the cache.
 		// Subsequent reads could also be satisfied by the
 		// cache, so we can't nil out c.cache yet.
-		return c.fillFromCache(p, offset)
-	case end == c.size:
-		n, err = c.fillFromCache(p, offset)
+		return s.fillFromCache(p, offset)
+	case end == s.size:
+		n, err = s.fillFromCache(p, offset)
 		// The read is satisfied completely by the cache with
 		// no unread cache bytes. Thus, we can nil out c.cache,
 		// because the next read will be direct from src, and
 		// the cache will never be used again.
-		c.cache = nil
-		r.readFn = c.readSrcDirect
+		s.cache = nil
+		r.readFn = s.readSrcDirect
 		return n, err
-	case offset == c.size:
+	case offset == s.size:
 		// The read is entirely beyond what's cached, so we switch
 		// to reading directly from src. We can nil out c.cache,
 		// as it'll never be used again.
-		c.cache = nil
-		r.readFn = c.readSrcDirect
+		s.cache = nil
+		r.readFn = s.readSrcDirect
 
 		// We don't need to get the src lock, because this is the final reader.
-		n, err = c.src.Read(p)
+		n, err = s.src.Read(p)
 
 		// Because we're updating c's fields, we need to get write lock.
-		c.writeLock(r)
-		c.size += n
-		c.readErr = err
-		c.writeUnlock(r)
+		s.writeLock(r)
+		s.size += n
+		s.readErr = err
+		s.writeUnlock(r)
 		return n, err
-	case offset > c.size:
+	case offset > s.size:
 		// Should be impossible.
 		panic("Offset is beyond end of cache")
 	default:
@@ -367,10 +361,10 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 
 	// This read requires combining bytes from cache with new
 	// bytes from src. First, copy the cache bytes.
-	n, err = c.fillFromCache(p, offset)
+	n, err = s.fillFromCache(p, offset)
 	// Now that we've got what we need from the cache,
 	// we can nil it out. It'll never be used again.
-	c.cache = nil
+	s.cache = nil
 	if err != nil {
 		return n, err
 	}
@@ -378,91 +372,91 @@ func (c *Cache) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	// Next, read some more from src. We don't need to get src lock,
 	// because this is the final reader.
 	var n2 int
-	n2, err = c.src.Read(p[n:])
+	n2, err = s.src.Read(p[n:])
 
 	// Because we're updating c's fields, we need to get write lock.
-	c.writeLock(r)
-	c.size += n2
-	c.readErr = err
+	s.writeLock(r)
+	s.size += n2
+	s.readErr = err
 	n += n2
-	c.writeUnlock(r)
+	s.writeUnlock(r)
 	// Any subsequent reads will be direct from src.
-	r.readFn = c.readSrcDirect
+	r.readFn = s.readSrcDirect
 	return n, err
 }
 
-// Done returns a channel that is closed when the Cache is finished. This
+// ReadersDone returns a channel that is closed when the Stream is finished. This
 // channel can be used to wait for work to complete.
 //
 //	select {
-//	case <-c.Done():
+//	case <-c.ReadersDone():
 //		return c.Err()
 //	default:
 //		fmt.Println("The cache is still in use")
 //	}
 //
-// A Cache is considered finished after Seal has been invoked on it, and there
-// are zero unclosed Reader instances remaining. Note that Cache.Err returning a
-// non-nil value does not of itself indicate that the Cache is finished. There
+// A Stream is considered finished after Seal has been invoked on it, and there
+// are zero unclosed Reader instances remaining. Note that Stream.Err returning a
+// non-nil value does not of itself indicate that the Stream is finished. There
 // could be other readers still consuming earlier parts of the cache.
 //
-// Note also that it's possible that a finished Cache has not closed its
-// underlying source reader. For example, if a Cache is created and immediately
-// sealed, the Cache is finished, but the underlying source reader was never
+// Note also that it's possible that a finished Stream has not closed its
+// underlying source reader. For example, if a Stream is created and immediately
+// sealed, the Stream is finished, but the underlying source reader was never
 // closed. The source reader is closed only by closing the last Reader instance
 // that was active after Seal was invoked.
-func (c *Cache) Done() <-chan struct{} {
-	return c.done
+func (s *Stream) ReadersDone() <-chan struct{} {
+	return s.rdrsDoneCh
 }
 
 // Size returns the number of bytes read from the underlying reader.
-// This value increases as readers read from the Cache.
-func (c *Cache) Size() int {
-	c.cMu.RLock()
-	defer c.cMu.RUnlock()
-	return c.size
+// This value increases as readers read from the Stream.
+func (s *Stream) Size() int {
+	s.cMu.RLock()
+	defer s.cMu.RUnlock()
+	return s.size
 }
 
 // Err returns the first error (if any) that was returned by the underlying
 // source reader, which may be io.EOF. After the source reader returns an
 // error, it is never read from again. But typically the source reader
-// should still be explicitly closed, by closing all of this Cache's readers.
-func (c *Cache) Err() error {
-	c.cMu.RLock()
-	defer c.cMu.RUnlock()
-	return c.readErr
+// should still be explicitly closed, by closing all of this Stream's readers.
+func (s *Stream) Err() error {
+	s.cMu.RLock()
+	defer s.cMu.RUnlock()
+	return s.readErr
 }
 
 // ErrAt returns the byte offset at which the first error (if any) was
-// returned by the underlying source reader, or -1. Thus, if Cache.Err
-// is non-nil, ErrAt will be >= 0 and equal to Cache.Size.
-func (c *Cache) ErrAt() int {
-	c.cMu.RLock()
-	defer c.cMu.RUnlock()
-	if c.readErr == nil {
+// returned by the underlying source reader, or -1. Thus, if Stream.Err
+// is non-nil, ErrAt will be >= 0 and equal to Stream.Size.
+func (s *Stream) ErrAt() int {
+	s.cMu.RLock()
+	defer s.cMu.RUnlock()
+	if s.readErr == nil {
 		return -1
 	}
-	return c.size
+	return s.size
 }
 
-// close is invoked by Reader.Close to close itself. If the Cache
+// close is invoked by Reader.Close to close itself. If the Stream
 // is sealed and r is the final unclosed reader, this method closes
 // the src reader, if it implements io.Closer.
-func (c *Cache) close(r *Reader) error {
-	c.cMu.Lock()
-	defer c.cMu.Unlock()
+func (s *Stream) close(r *Reader) error {
+	s.cMu.Lock()
+	defer s.cMu.Unlock()
 
-	c.rdrs = remove(c.rdrs, r)
+	s.rdrs = remove(s.rdrs, r)
 
-	if !c.sealed {
+	if !s.sealed {
 		return nil
 	}
 
-	if len(c.rdrs) == 0 {
-		defer close(c.done)
+	if len(s.rdrs) == 0 {
+		defer close(s.rdrsDoneCh)
 		// r is last Reader, so we can close the source
 		// reader, if it implements io.Closer.
-		if rc, ok := c.src.(io.Closer); ok {
+		if rc, ok := s.src.(io.Closer); ok {
 			return rc.Close()
 		}
 	}
@@ -471,36 +465,36 @@ func (c *Cache) close(r *Reader) error {
 }
 
 // Seal is called to indicate that no more calls to NewReader are permitted.
-// If there are no unclosed readers when Seal is invoked, the Cache.Done
-// channel is closed, and the Cache is considered finished. Subsequent
+// If there are no unclosed readers when Seal is invoked, the Stream.ReadersDone
+// channel is closed, and the Stream is considered finished. Subsequent
 // invocations are no-op.
-func (c *Cache) Seal() {
-	c.cMu.Lock()
-	defer c.cMu.Unlock()
+func (s *Stream) Seal() {
+	s.cMu.Lock()
+	defer s.cMu.Unlock()
 
-	if c.sealed {
+	if s.sealed {
 		return
 	}
 
-	c.sealed = true
-	if len(c.rdrs) == 0 {
-		close(c.done)
+	s.sealed = true
+	if len(s.rdrs) == 0 {
+		close(s.rdrsDoneCh)
 	}
 }
 
 // Sealed returns true if Seal has been invoked.
-func (c *Cache) Sealed() bool {
-	c.cMu.RLock()
-	defer c.cMu.RUnlock()
-	return c.sealed
+func (s *Stream) Sealed() bool {
+	s.cMu.RLock()
+	defer s.cMu.RUnlock()
+	return s.sealed
 }
 
 var _ io.ReadCloser = (*Reader)(nil)
 
-// Reader is returned by Cache.NewReader. Reader implements io.ReadCloser: it
+// Reader is returned by Stream.NewReader. Reader implements io.ReadCloser: it
 // is the responsibility of the caller to close Reader.
 type Reader struct {
-	// ctx is the context provided to Cache.NewReader. If non-nil,
+	// ctx is the context provided to Stream.NewReader. If non-nil,
 	// every invocation of Reader.Read checks ctx for cancellation
 	// before proceeding. Note that Reader.Close ignores ctx.
 	ctx context.Context
@@ -511,13 +505,13 @@ type Reader struct {
 	// read error is returned every time.
 	readErr error
 
-	// c is the Reader's parent Cache.
-	c *Cache
+	// c is the Reader's parent Stream.
+	c *Stream
 
 	// readFn is the func that Reader.Read invokes to read bytes.
-	// Initially it is set to Cache.readMain, but if this reader
+	// Initially it is set to Stream.readMain, but if this reader
 	// becomes the last man standing, this field may be set
-	// to Cache.readSrcDirect.
+	// to Stream.readSrcDirect.
 	readFn readFunc
 
 	// pCloseErr is set by Reader.Close, and the set value is
@@ -533,15 +527,15 @@ type Reader struct {
 	mu sync.Mutex
 }
 
-// Read implements io.Reader. If a non-nil context was provided to Cache.NewReader
+// Read implements io.Reader. If a non-nil context was provided to Stream.NewReader
 // to create this Reader, that context is checked at the start of each call
 // to Read (and possibly at some other checkpoints): if the context has
 // canceled, Read will return the context's error via context.Cause. Note
-// however that Read can still block on reading from the Cache source. If this
+// however that Read can still block on reading from the Stream source. If this
 // reader has already been closed via Reader.Close, Read will return ErrAlreadyClosed.
 // If a previous invocation of Read returned an error from the source, that
-// error is returned. Otherwise Read reads from Cache, which may return bytes
-// from Cache's cache or new bytes from the source, or a combination of both.
+// error is returned. Otherwise Read reads from Stream, which may return bytes
+// from Stream's cache or new bytes from the source, or a combination of both.
 func (r *Reader) Read(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -568,17 +562,17 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Close closes this Reader. If the parent Cache is not sealed, this method is
-// ultimately returns nil. If the parent Cache is sealed and this is the last
-// remaining reader, the Cache's origin io.Reader is closed, if it implements
-// io.Closer. At that point, the Cache instance is considered finished, and
-// the channel returned by Cache.Done is closed.
+// Close closes this Reader. If the parent Stream is not sealed, this method is
+// ultimately returns nil. If the parent Stream is sealed and this is the last
+// remaining reader, the Stream's origin io.Reader is closed, if it implements
+// io.Closer. At that point, the Stream instance is considered finished, and
+// the channel returned by Stream.ReadersDone is closed.
 //
 // If you don't want the source reader to be closed, wrap it via io.NopCloser
 // before passing it to streamcache.New.
 //
 // The Close operation proceeds even if the non-nil context provided to
-// Cache.NewReader is cancelled. That is to say, Reader.Close ignores context.
+// Stream.NewReader is cancelled. That is to say, Reader.Close ignores context.
 //
 // Note that subsequent calls to Close are no-op and return the same result
 // as the first call.

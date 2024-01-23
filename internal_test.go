@@ -9,6 +9,6 @@ func ReaderOffset(r *Reader) int {
 }
 
 // CacheInternal returns c's internal cache byte slice.
-func CacheInternal(c *Cache) []byte {
+func CacheInternal(c *Stream) []byte {
 	return c.cache
 }

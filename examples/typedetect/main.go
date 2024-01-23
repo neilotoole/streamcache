@@ -115,7 +115,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-cache.Done():
+	case <-cache.ReadersDone():
 		// The cache can't be done until outputRdr is closed,
 		// which obviously hasn't happened yet, so this cache
 		// done scenario must be an error.

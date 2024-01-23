@@ -33,8 +33,8 @@ func TestCache(t *testing.T) {
 	cache := streamcache.New(strings.NewReader(anything))
 	require.False(t, isDone(cache))
 	select {
-	case <-cache.Done():
-		t.Fatal("src.Done() should not be closed")
+	case <-cache.ReadersDone():
+		t.Fatal("src.ReadersDone() should not be closed")
 	default:
 	}
 	require.Equal(t, 0, cache.Size())
@@ -58,8 +58,8 @@ func TestCache(t *testing.T) {
 	require.True(t, cache.Sealed())
 	require.False(t, isDone(cache))
 	select {
-	case <-cache.Done():
-		t.Fatal("src.Done() should not be closed")
+	case <-cache.ReadersDone():
+		t.Fatal("src.ReadersDone() should not be closed")
 	default:
 	}
 
@@ -104,10 +104,10 @@ func TestCache(t *testing.T) {
 	require.True(t, isDone(cache))
 
 	select {
-	case <-cache.Done():
+	case <-cache.ReadersDone():
 		// Expected
 	default:
-		t.Fatal("cache.Done() should be closed")
+		t.Fatal("cache.ReadersDone() should be closed")
 	}
 
 	// Closing again should be no-op.
@@ -235,14 +235,14 @@ func TestCache_File_Concurrent(t *testing.T) {
 	}
 
 	select {
-	case <-cache.Done():
+	case <-cache.ReadersDone():
 		t.Fatal("Shouldn't be done because not sealed")
 	default:
 	}
 
 	cache.Seal()
 
-	<-cache.Done()
+	<-cache.ReadersDone()
 
 	require.Equal(t, wantSize, cache.Size())
 }
@@ -296,7 +296,7 @@ func TestCache_File_Concurrent2(t *testing.T) {
 		}(i, rdrs[i])
 	}
 
-	<-cache.Done()
+	<-cache.ReadersDone()
 
 	assert.NoError(t, err)
 	require.Equal(t, wantSize, cache.Size())
@@ -470,9 +470,9 @@ func sleepJitter() {
 	time.Sleep(d)
 }
 
-func isDone(cache *streamcache.Cache) bool {
+func isDone(cache *streamcache.Stream) bool {
 	select {
-	case <-cache.Done():
+	case <-cache.ReadersDone():
 		return true
 	default:
 		return false

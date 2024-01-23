@@ -2,60 +2,60 @@ package streamcache
 
 // FIXME: delete this lock functions before release.
 
-func (c *Cache) readLock(r *Reader) {
+func (s *Stream) readLock(r *Reader) {
 	logf(r, "read lock: before")
-	c.cMu.RLock()
+	s.cMu.RLock()
 	logf(r, "read lock: after")
 }
 
-func (c *Cache) readUnlock(r *Reader) {
+func (s *Stream) readUnlock(r *Reader) {
 	logf(r, "read unlock: before")
-	c.cMu.RUnlock()
+	s.cMu.RUnlock()
 	logf(r, "read unlock: after")
 }
 
-func (c *Cache) readTryLock(r *Reader) bool {
+func (s *Stream) readTryLock(r *Reader) bool {
 	logf(r, "try read lock: before")
-	ok := c.cMu.TryRLock()
+	ok := s.cMu.TryRLock()
 	logf(r, "try read lock: after: %v", ok)
 	return ok
 }
 
-func (c *Cache) writeLock(r *Reader) {
+func (s *Stream) writeLock(r *Reader) {
 	logf(r, "write lock: before")
-	c.cMu.Lock()
+	s.cMu.Lock()
 	logf(r, "write lock: after")
 }
 
-func (c *Cache) writeTryLock(r *Reader) bool { //nolint:unused
+func (s *Stream) writeTryLock(r *Reader) bool { //nolint:unused
 	logf(r, "try write lock: before")
-	ok := c.cMu.TryLock()
+	ok := s.cMu.TryLock()
 	logf(r, "try write lock: after: %v", ok)
 	return ok
 }
 
-func (c *Cache) writeUnlock(r *Reader) {
+func (s *Stream) writeUnlock(r *Reader) {
 	logf(r, "write unlock: before")
-	c.cMu.Unlock()
+	s.cMu.Unlock()
 	logf(r, "write unlock: after")
 }
 
-func (c *Cache) srcLock(r *Reader) {
+func (s *Stream) srcLock(r *Reader) {
 	logf(r, "src lock: before")
-	c.srcMu.Lock()
+	s.srcMu.Lock()
 	logf(r, "src lock: after")
 }
 
-func (c *Cache) srcTryLock(r *Reader) bool {
+func (s *Stream) srcTryLock(r *Reader) bool {
 	logf(r, "try src lock: before")
-	ok := c.srcMu.TryLock()
+	ok := s.srcMu.TryLock()
 	// ok := c.srcMu.TryLock()
 	logf(r, "try src lock: after: %v", ok)
 	return ok
 }
 
-func (c *Cache) srcUnlock(r *Reader) {
+func (s *Stream) srcUnlock(r *Reader) {
 	logf(r, "src unlock: before")
-	c.srcMu.Unlock()
+	s.srcMu.Unlock()
 	logf(r, "src unlock: after")
 }
