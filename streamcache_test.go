@@ -136,6 +136,7 @@ func TestReaderAlreadyClosed(t *testing.T) {
 	requireNoTotal(t, s)
 	requireNoTake(t, s.ReadersDone())
 	requireNoTake(t, s.SourceDone())
+	requireNoTotal(t, s)
 }
 
 func TestSingleReaderImmediateSeal(t *testing.T) {
@@ -172,12 +173,7 @@ func TestReader_NoSeal(t *testing.T) {
 
 func TestStream_File(t *testing.T) {
 	ctx := context.Background()
-	_, fp := generateSampleFile(t, numSampleRows)
-
-	fi, err := os.Stat(fp)
-	require.NoError(t, err)
-	t.Logf("Sample file size: %d", fi.Size())
-
+	sampleSize, fp := generateSampleFile(t, numSampleRows)
 	wantData, err := os.ReadFile(fp)
 	require.NoError(t, err)
 
@@ -193,12 +189,20 @@ func TestStream_File(t *testing.T) {
 
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
+	requireTotal(t, s, sampleSize)
+	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.ReadersDone())
+	require.Equal(t, sampleSize, s.Size())
+	require.True(t, errors.Is(s.Err(), io.EOF))
 
 	require.Equal(t, string(wantData), string(gotData))
 
 	assert.NoError(t, r.Close())
 	assert.Equal(t, 1, recorder.closeCount)
-	require.Equal(t, fi.Size(), int64(s.Size()))
+	require.Equal(t, sampleSize, s.Size())
+	requireTake(t, s.SourceDone())
+	requireTake(t, s.ReadersDone())
+	requireTotal(t, s, sampleSize)
 }
 
 func TestStream_File_Concurrent_SealLate(t *testing.T) {
