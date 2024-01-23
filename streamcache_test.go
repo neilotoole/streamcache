@@ -26,7 +26,7 @@ const (
 	anything      = "anything"
 )
 
-func TestCache(t *testing.T) {
+func TestStream(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -157,7 +157,7 @@ func TestReader_NoSeal(t *testing.T) {
 	require.Equal(t, io.EOF, s.Err())
 }
 
-func TestCache_File(t *testing.T) {
+func TestStream_File(t *testing.T) {
 	ctx := context.Background()
 	_, fp := generateSampleFile(t, numSampleRows)
 
@@ -188,7 +188,7 @@ func TestCache_File(t *testing.T) {
 	require.Equal(t, fi.Size(), int64(s.Size()))
 }
 
-func TestCache_File_Concurrent(t *testing.T) {
+func TestStream_File_Concurrent_SealLate(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -229,10 +229,8 @@ func TestCache_File_Concurrent(t *testing.T) {
 
 var envarLog = "STREAMCACHE_LOG"
 
-func TestCache_File_Concurrent2(t *testing.T) {
+func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 	t.Parallel()
-
-	// FIXME: Do we need two TestCache_File_Concurrent tests?
 
 	ctx := context.Background()
 	wantSize, fp := generateSampleFile(t, numSampleRows)
