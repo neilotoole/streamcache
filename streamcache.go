@@ -173,6 +173,10 @@ func (s *Stream) readSrcDirect(r *Reader, p []byte, _ int) (n int, err error) {
 	return n, err
 }
 
+func (s *Stream) isSatisfiedFromCache(p []byte, offset int) bool {
+	return s.size > offset || (s.readErr != nil && offset+len(p) >= s.size)
+}
+
 // readMain reads from Stream.cache and/or Stream.src. If Stream is sealed
 // and r is the final Reader, this method may switch r's Reader.readFn
 // to Stream.readSrcDirect, such that the remaining reads occur
@@ -189,7 +193,7 @@ TOP:
 		return s.readFinal(r, p, offset)
 	}
 
-	if s.size > offset {
+	if s.isSatisfiedFromCache(p, offset) {
 		// There's some data in the cache that can be returned.
 		// Even if the amount of data is not enough to fill p,
 		// we return what we can, and let the caller decide
@@ -226,7 +230,7 @@ TOP:
 
 		// We've got the read lock, let's see if there's any fresh bytes
 		// in the cache that can be returned.
-		if s.size > offset {
+		if s.isSatisfiedFromCache(p, offset) {
 			// Yup, there are bytes available in the cache. Return them.
 			n, err = s.fillFromCache(p, offset)
 			s.readUnlock(r)
@@ -255,7 +259,7 @@ TOP:
 	// We don't need to acquire the read lock, because we already have the
 	// src lock, and only the src lock holder ever acquires the write lock,
 	// so it's safe to proceed.
-	if s.size > offset || (s.readErr != nil && offset+len(p) >= s.size) {
+	if s.isSatisfiedFromCache(p, offset) {
 		// There's some new stuff in the cache. Return it.
 		n, err = s.fillFromCache(p, offset)
 		s.srcUnlock(r)
