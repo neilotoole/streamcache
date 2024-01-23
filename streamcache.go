@@ -173,10 +173,6 @@ func (s *Stream) readSrcDirect(r *Reader, p []byte, _ int) (n int, err error) {
 	return n, err
 }
 
-func (s *Stream) isSatisfiedFromCache(p []byte, offset int) bool {
-	return s.size > offset || (s.readErr != nil && offset+len(p) >= s.size)
-}
-
 // readMain reads from Stream.cache and/or Stream.src. If Stream is sealed
 // and r is the final Reader, this method may switch r's Reader.readFn
 // to Stream.readSrcDirect, such that the remaining reads occur
@@ -306,6 +302,13 @@ TOP:
 	s.srcUnlock(r)
 	runtime.Gosched()
 	return n, err
+}
+
+// isSatisfiedFromCache returns true if the read can be satisfied from
+// the cache due to the cache's size or because a read from source
+// would encounter the non-nil s.readErr.
+func (s *Stream) isSatisfiedFromCache(p []byte, offset int) bool {
+	return s.size > offset || (s.readErr != nil && offset+len(p) >= s.size)
 }
 
 // fillFromCache copies bytes from Stream.cache to p, starting at offset,
