@@ -116,6 +116,7 @@ func New(src io.Reader) *Stream {
 		src:        src,
 		cache:      make([]byte, 0),
 		rdrsDoneCh: make(chan struct{}),
+		srcDoneCh:  make(chan struct{}),
 	}
 
 	return c
@@ -164,6 +165,10 @@ func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	defer s.cMu.Unlock()
 	s.size += n
 	s.readErr = err
+	if err != nil {
+		close(s.srcDoneCh)
+	}
+
 	return n, err
 }
 
@@ -212,8 +217,8 @@ TOP:
 			// We couldn't get the read lock, because another reader
 			// is updating the cache after having read from src, and thus
 			// has the write lock. There's only a tiny window where the
-			// write lock is held, so our naive strategy here is just
-			// to go back to the top.
+			// write lock is held, so our naive strategy here is to just
+			// go back to the top.
 			logf(r, "try read lock failed; going back to TOP.")
 			goto TOP
 		}
@@ -297,9 +302,9 @@ TOP:
 	return n, err
 }
 
-// fillFromCache copies bytes from the cache to p, starting at offset.
+// fillFromCache copies bytes from Stream.cache to p, starting at offset,
 // returning the number of bytes copied. If readErr is non-nil and we've
-// reached the value of readErrAt, readErr is returned.
+// reached the value of ErrAt, readErr is returned.
 func (s *Stream) fillFromCache(p []byte, offset int) (n int, err error) {
 	n = copy(p, s.cache[offset:])
 	if s.readErr != nil && n+offset >= s.size {
@@ -316,7 +321,7 @@ func (s *Stream) fillFromCache(p []byte, offset int) (n int, err error) {
 //     will still need to use the cache.
 //  2. This read exactly matches the end of the cache, with no
 //     unread bytes left in the cache. The subsequent read will be
-//     directly against source and cache can be nilled.
+//     directly against src and cache can be nilled.
 //  3. The read offset aligns exactly with src's offset, thus this
 //     read can be satisfied directly from src, as will all future
 //     reads. We no longer need the cache.
@@ -329,20 +334,20 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	case end < s.size:
 		// The read can be satisfied entirely from the cache.
 		// Subsequent reads could also be satisfied by the
-		// cache, so we can't nil out c.cache yet.
+		// cache, so we can't nil out s.cache yet.
 		return s.fillFromCache(p, offset)
 	case end == s.size:
 		n, err = s.fillFromCache(p, offset)
 		// The read is satisfied completely by the cache with
-		// no unread cache bytes. Thus, we can nil out c.cache,
-		// because the next read will be direct from src, and
+		// no unread cache bytes. Thus, we can nil out s.cache,
+		// because the next read will be directly from src, and
 		// the cache will never be used again.
 		s.cache = nil
 		r.readFn = s.readSrcDirect
 		return n, err
 	case offset == s.size:
 		// The read is entirely beyond what's cached, so we switch
-		// to reading directly from src. We can nil out c.cache,
+		// to reading directly from src. We can nil out s.cache,
 		// as it'll never be used again.
 		s.cache = nil
 		r.readFn = s.readSrcDirect
@@ -350,7 +355,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		// We don't need to get the src lock, because this is the final reader.
 		n, err = s.src.Read(p)
 
-		// Because we're updating c's fields, we need to get write lock.
+		// Because we're updating s's fields, we need to get the write lock.
 		s.writeLock(r)
 		s.size += n
 		s.readErr = err
@@ -378,7 +383,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	var n2 int
 	n2, err = s.src.Read(p[n:])
 
-	// Because we're updating c's fields, we need to get write lock.
+	// Because we're updating s's fields, we need to get write lock.
 	s.writeLock(r)
 	s.size += n2
 	s.readErr = err
@@ -389,36 +394,83 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	return n, err
 }
 
-// ReadersDone returns a channel that is closed when the Stream is finished. This
-// channel can be used to wait for work to complete.
+// ReadersDone returns a channel that is closed when the Stream is
+// sealed and all remaining readers are closed.
 //
 //	select {
-//	case <-c.ReadersDone():
-//		return c.Err()
+//	case <-s.ReadersDone():
+//	  fmt.Println("All readers are done")
+//	  if err := s.Err(); err != nil {
+//	    fmt.Println("But an error occurred:", err)
+//	  }
 //	default:
-//		fmt.Println("The cache is still in use")
+//	  fmt.Println("The stream still is being read from")
 //	}
 //
-// A Stream is considered finished after Seal has been invoked on it, and there
+// The returned channel is closed after Seal has been invoked on it, and there
 // are zero unclosed Reader instances remaining. Note that Stream.Err returning a
-// non-nil value does not of itself indicate that the Stream is finished. There
+// non-nil value does not of itself indicate that the readers are done. There
 // could be other readers still consuming earlier parts of the cache.
 //
-// Note also that it's possible that a finished Stream has not closed its
-// underlying source reader. For example, if a Stream is created and immediately
-// sealed, the Stream is finished, but the underlying source reader was never
-// closed. The source reader is closed only by closing the last Reader instance
-// that was active after Seal was invoked.
+// Note also that it's possible that even after the returned channel is closed,
+// Stream may not have closed its underlying source reader. For example, if a
+// Stream is created and immediately sealed, the channel returned by ReadersDone
+// is closed, although the underlying source reader was never closed.
+// The source reader is closed only by closing the final Reader instance
+// that was active after Seal is invoked.
+//
+// See also: Stream.SourceDone.
 func (s *Stream) ReadersDone() <-chan struct{} {
 	return s.rdrsDoneCh
 }
 
-// Size returns the number of bytes read from the underlying reader.
+// SourceDone returns a channel that is closed when the underlying source
+// reader returns an error, including io.EOF. If the source reader returns
+// an error, it is never read from again. If the source reader does not
+// return an error, this channel is never closed.
+//
+// See also: Stream.ReadersDone.
+func (s *Stream) SourceDone() <-chan struct{} {
+	return s.srcDoneCh
+}
+
+// Size returns the current count of bytes read from the source reader.
 // This value increases as readers read from the Stream.
+//
+// See also: Stream.Total.
 func (s *Stream) Size() int {
 	s.cMu.RLock()
 	defer s.cMu.RUnlock()
 	return s.size
+}
+
+// Total blocks until the source reader is fully read, and returns the total
+// number of bytes read from the source, and any read error other than io.EOF
+// returned by the source. If ctx is cancelled, zero and the context's cause
+// error are returned. If source returned a non-EOF error, that error and
+// the total number of bytes read are returned.
+//
+// Note that Total only returns if the channel returned by Stream.SourceDone
+// is closed, but Total can return even if Stream.ReadersDone is not closed.
+// That is to say, Total returning does not necessarily mean that all readers
+// are closed.
+//
+// See also: Stream.Size, Stream.Err, Stream.SourceDone, Stream.ReadersDone.
+func (s *Stream) Total(ctx context.Context) (size int, err error) {
+	select {
+	case <-ctx.Done():
+		return 0, context.Cause(ctx)
+	case <-s.srcDoneCh:
+		s.cMu.RLock()
+		defer s.cMu.RUnlock()
+
+		size = s.size
+		err = s.readErr
+		if err != nil && errors.Is(err, io.EOF) {
+			err = nil
+		}
+		return size, err
+	}
 }
 
 // Err returns the first error (if any) that was returned by the underlying
@@ -495,8 +547,8 @@ func (s *Stream) Sealed() bool {
 
 var _ io.ReadCloser = (*Reader)(nil)
 
-// Reader is returned by Stream.NewReader. Reader implements io.ReadCloser: it
-// is the responsibility of the caller to close Reader.
+// Reader is returned by Stream.NewReader. It implements io.ReadCloser; the
+// caller must close the Reader when finished with it.
 type Reader struct {
 	// ctx is the context provided to Stream.NewReader. If non-nil,
 	// every invocation of Reader.Read checks ctx for cancellation
@@ -524,7 +576,7 @@ type Reader struct {
 	Name      string // FIXME: delete when done with development
 
 	// offset is the offset into the stream from which the next
-	// Read will read. It is incremented by each Read.
+	// call to Read will read. It is incremented by each Read.
 	offset int
 
 	// mu guards Reader's methods.
@@ -533,7 +585,7 @@ type Reader struct {
 
 // Read implements io.Reader. If a non-nil context was provided to Stream.NewReader
 // to create this Reader, that context is checked at the start of each call
-// to Read (and possibly at some other checkpoints): if the context has
+// to Read (and possibly at some other checkpoints): if the context has been
 // canceled, Read will return the context's error via context.Cause. Note
 // however that Read can still block on reading from the Stream source. If this
 // reader has already been closed via Reader.Close, Read will return ErrAlreadyClosed.
@@ -566,14 +618,14 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// Close closes this Reader. If the parent Stream is not sealed, this method is
+// Close closes this Reader. If the parent Stream is not sealed, this method
 // ultimately returns nil. If the parent Stream is sealed and this is the last
-// remaining reader, the Stream's origin io.Reader is closed, if it implements
-// io.Closer. At that point, the Stream instance is considered finished, and
-// the channel returned by Stream.ReadersDone is closed.
+// remaining reader, the Stream's source reader is closed, if it implements
+// io.Closer. At that point, and the channel returned by Stream.ReadersDone
+// is closed.
 //
-// If you don't want the source reader to be closed, wrap it via io.NopCloser
-// before passing it to streamcache.New.
+// If you don't want the source to be closed, wrap it via io.NopCloser before
+// passing it to streamcache.New.
 //
 // The Close operation proceeds even if the non-nil context provided to
 // Stream.NewReader is cancelled. That is to say, Reader.Close ignores context.
