@@ -157,12 +157,12 @@ var (
 // readSrcDirect reads directly from Stream.src. The src's size is
 // incremented as bytes are read from src, and Stream.readErr is set if
 // src returns an error.
-func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
+func (s *Stream) readSrcDirect(r *Reader, p []byte, _ int) (n int, err error) {
 	n, err = s.src.Read(p)
 
 	// Get the write lock before updating c's fields.
-	s.cMu.Lock()
-	defer s.cMu.Unlock()
+	s.writeLock(r)
+	defer s.writeUnlock(r)
 	s.size += n
 	s.readErr = err
 	if err != nil {
@@ -173,7 +173,7 @@ func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 }
 
 // readMain reads from Stream.cache and/or Stream.src. If Stream is sealed
-// and r is the final Reader, this method may switch r.readFn
+// and r is the final Reader, this method may switch r's Reader.readFn
 // to Stream.readSrcDirect, such that the remaining reads occur
 // directly against src, bypassing Stream.cache entirely.
 func (s *Stream) readMain(r *Reader, p []byte, offset int) (n int, err error) {
@@ -181,7 +181,7 @@ TOP:
 	s.readLock(r)
 
 	if s.sealed && len(s.rdrs) == 1 {
-		// The cache is sealed, and this is the final reader.
+		// The stream is sealed, and this is the final reader.
 		// We can release the read lock (because this is the only possible
 		// reader), and delegate to readFinal.
 		s.readUnlock(r)
@@ -298,7 +298,7 @@ TOP:
 	// locks, and return.
 	s.writeUnlock(r)
 	s.srcUnlock(r)
-	runtime.Gosched()
+	runtime.Gosched() // FIXME: delete runtime.Gosched call.
 	return n, err
 }
 
@@ -495,31 +495,6 @@ func (s *Stream) ErrAt() int {
 	return s.size
 }
 
-// close is invoked by Reader.Close to close itself. If the Stream
-// is sealed and r is the final unclosed reader, this method closes
-// the src reader, if it implements io.Closer.
-func (s *Stream) close(r *Reader) error {
-	s.cMu.Lock()
-	defer s.cMu.Unlock()
-
-	s.rdrs = remove(s.rdrs, r)
-
-	if !s.sealed {
-		return nil
-	}
-
-	if len(s.rdrs) == 0 {
-		defer close(s.rdrsDoneCh)
-		// r is last Reader, so we can close the source
-		// reader, if it implements io.Closer.
-		if rc, ok := s.src.(io.Closer); ok {
-			return rc.Close()
-		}
-	}
-
-	return nil
-}
-
 // Seal is called to indicate that no more calls to NewReader are permitted.
 // If there are no unclosed readers when Seal is invoked, the Stream.ReadersDone
 // channel is closed, and the Stream is considered finished. Subsequent
@@ -543,6 +518,31 @@ func (s *Stream) Sealed() bool {
 	s.cMu.RLock()
 	defer s.cMu.RUnlock()
 	return s.sealed
+}
+
+// close is invoked by Reader.Close to close itself. If the Stream
+// is sealed and r is the final unclosed reader, this method closes
+// the src reader, if it implements io.Closer.
+func (s *Stream) close(r *Reader) error {
+	s.cMu.Lock()
+	defer s.cMu.Unlock()
+
+	s.rdrs = remove(s.rdrs, r)
+
+	if !s.sealed {
+		return nil
+	}
+
+	if len(s.rdrs) == 0 {
+		defer close(s.rdrsDoneCh)
+		// r is last Reader, so we can close the source
+		// reader, if it implements io.Closer.
+		if rc, ok := s.src.(io.Closer); ok {
+			return rc.Close()
+		}
+	}
+
+	return nil
 }
 
 var _ io.ReadCloser = (*Reader)(nil)
