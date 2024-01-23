@@ -168,15 +168,15 @@ func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	}
 }
 
+// totalTimeout is used by requireTotal and requireNoTotal.
+const totalTimeout = time.Millisecond * 100
+
 // requireNoTotal requires that s.Total blocks.
 func requireNoTotal(t *testing.T, s *streamcache.Stream) {
 	t.Helper()
 
 	failErr := errors.New("fail")
 	ctx, cancel := context.WithCancelCause(context.Background())
-	time.AfterFunc(time.Millisecond*10, func() {
-		cancel(failErr)
-	})
 
 	var (
 		size int
@@ -185,6 +185,9 @@ func requireNoTotal(t *testing.T, s *streamcache.Stream) {
 	)
 
 	go func() {
+		time.AfterFunc(totalTimeout, func() {
+			cancel(failErr)
+		})
 		size, err = s.Total(ctx)
 		wait <- struct{}{}
 	}()
@@ -201,9 +204,6 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancelCause(context.Background())
-	time.AfterFunc(time.Millisecond*10, func() {
-		cancel(errors.New("fail"))
-	})
 
 	var (
 		err  error
@@ -211,6 +211,9 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 		wait = make(chan struct{})
 	)
 	go func() {
+		time.AfterFunc(totalTimeout, func() {
+			cancel(errors.New("fail"))
+		})
 		size, err = s.Total(ctx)
 		wait <- struct{}{}
 	}()

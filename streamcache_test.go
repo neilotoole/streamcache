@@ -227,6 +227,7 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 			gotData, err := io.ReadAll(r)
 			assert.NoError(t, err)
 			assert.Equal(t, string(wantData), string(gotData))
+			requireTake(t, s.SourceDone())
 			requireTotal(t, s, wantSize)
 		}(r)
 	}
