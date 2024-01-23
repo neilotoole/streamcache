@@ -47,11 +47,11 @@ var ErrAlreadyClosed = errors.New("reader is already closed")
 
 // Stream mediates access to the bytes of an underlying source io.Reader.
 // Multiple callers can invoke Stream.NewReader to obtain a Reader, each of
-// which can read the full contents of the source reader. Note that the
-// source is only read from once, and the returned bytes are cached
-// in memory. After Stream.Seal is invoked and readers are closed, the
-// final reader discards the cache and reads directly from source for
-// the remaining bytes.
+// which can read the full or partial contents of the source reader. Note
+// that the source is only read from once, and the returned bytes are cached
+// in memory. After Stream.Seal is invoked and readers are closed, the final
+// reader discards the cache and reads directly from the source for the
+// remaining bytes.
 type Stream struct {
 	// src is the underlying reader from which bytes are read.
 	src io.Reader
@@ -64,6 +64,10 @@ type Stream struct {
 	// rdrsDoneCh is closed after the Stream is sealed and the last
 	// reader is closed. See Stream.ReadersDone.
 	rdrsDoneCh chan struct{}
+
+	// srcDoneCh is closed when the underlying source reader
+	// returns an error, including io.EOF. See Stream.EOF.
+	srcDoneCh chan struct{}
 
 	// rdrs is the set of unclosed Reader instances created
 	// by Stream.NewReader. When a Reader is closed, it is removed
@@ -105,7 +109,7 @@ type Stream struct {
 	// and src locks.
 }
 
-// New returns a new Stream that reads from src. Use Stream.NewReader
+// New returns a new Stream that wraps src. Use Stream.NewReader
 // to read from src.
 func New(src io.Reader) *Stream {
 	c := &Stream{
@@ -117,24 +121,24 @@ func New(src io.Reader) *Stream {
 	return c
 }
 
-// NewReader returns a new Reader for Stream. If ctx is non-nil, it is
+// NewReader returns a new Reader from Stream. If ctx is non-nil, it is
 // checked for cancellation at the start of Reader.Read (and possibly
 // at some other checkpoints).
 //
 // It is the caller's responsibility to close the returned Reader.
 //
-// NewReader panics if c is already sealed via Stream.Seal.
+// NewReader panics if s is already sealed via Stream.Seal.
 func (s *Stream) NewReader(ctx context.Context) *Reader {
 	s.cMu.Lock()
 	defer s.cMu.Unlock()
 
 	if s.sealed {
-		panic("Invoked Stream.NewReader on sealed Stream")
+		panic("streamcache: Stream.NewReader invoked on sealed Stream")
 	}
 
 	r := &Reader{
 		ctx:    ctx,
-		c:      s,
+		s:      s,
 		readFn: s.readMain,
 	}
 	s.rdrs = append(s.rdrs, r)
@@ -505,8 +509,8 @@ type Reader struct {
 	// read error is returned every time.
 	readErr error
 
-	// c is the Reader's parent Stream.
-	c *Stream
+	// s is the Reader's parent Stream.
+	s *Stream
 
 	// readFn is the func that Reader.Read invokes to read bytes.
 	// Initially it is set to Stream.readMain, but if this reader
@@ -586,7 +590,7 @@ func (r *Reader) Close() error {
 		return *r.pCloseErr
 	}
 
-	closeErr := r.c.close(r)
+	closeErr := r.s.close(r)
 	r.pCloseErr = &closeErr
 	return closeErr
 }
