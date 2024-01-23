@@ -592,7 +592,7 @@ type Reader struct {
 	mu sync.Mutex
 }
 
-// Read implements io.Reader. If a non-nil context was provided to Stream.NewReader
+// Read reads from the stream. If a non-nil context was provided to Stream.NewReader
 // to create this Reader, that context is checked at the start of each call
 // to Read (and possibly at some other checkpoints): if the context has been
 // canceled, Read will return the context's error via context.Cause. Note
