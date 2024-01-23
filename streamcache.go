@@ -71,7 +71,9 @@ type Stream struct {
 
 	// rdrs is the set of unclosed Reader instances created
 	// by Stream.NewReader. When a Reader is closed, it is removed
-	// from this slice.
+	// from this slice. Note that the element order may not match
+	// the Reader creation order, as the slice may be reordered
+	// by removeElement during Stream.close.
 	rdrs []*Reader
 
 	// cache holds the accumulated bytes read from src.
@@ -483,8 +485,6 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	case <-s.srcDoneCh:
 		// We don't need to lock here, because if srcDoneCh is
 		// closed, it means that s.size and s.readErr are final.
-		// s.cMu.RLock() // FIXME: delete when done with development
-		// defer s.cMu.RUnlock()
 		size = s.size
 		if s.readErr != nil && !errors.Is(s.readErr, io.EOF) {
 			err = s.readErr
@@ -548,7 +548,7 @@ func (s *Stream) close(r *Reader) error {
 	s.cMu.Lock()
 	defer s.cMu.Unlock()
 
-	s.rdrs = remove(s.rdrs, r)
+	s.rdrs = removeElement(s.rdrs, r)
 
 	if !s.sealed {
 		return nil
@@ -668,9 +668,10 @@ func (r *Reader) Close() error {
 	return closeErr
 }
 
-// remove returns the slice without the first occurrence of v.
-// Element order is not preserved.
-func remove[T any](a []*T, v *T) []*T {
+// removeElement returns a (possibly new) slice that contains the
+// elements of a without the first occurrence of v.
+// Element order may not be preserved.
+func removeElement[T any](a []*T, v *T) []*T {
 	// https://stackoverflow.com/a/37335777/6004734
 	for i := range a {
 		if a[i] == v {
