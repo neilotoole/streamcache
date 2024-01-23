@@ -483,8 +483,8 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	case <-s.srcDoneCh:
 		// We don't need to lock here, because if srcDoneCh is
 		// closed, it means that s.size and s.readErr are final.
-		//s.cMu.RLock()
-		//defer s.cMu.RUnlock()
+		// s.cMu.RLock()
+		// defer s.cMu.RUnlock()
 		size = s.size
 		err = s.readErr
 		if err != nil && errors.Is(err, io.EOF) {

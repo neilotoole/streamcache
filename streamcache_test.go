@@ -210,8 +210,6 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 	require.Equal(t, wantSize, s.Size())
 }
 
-var envarLog = "STREAMCACHE_LOG"
-
 func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 	t.Parallel()
 
@@ -451,4 +449,8 @@ func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	default:
 		require.Fail(t, "unexpected failure to take from channel", msgAndArgs...)
 	}
+}
+
+func enableLogging(t *testing.T) { //nolint:unused
+	t.Setenv("STREAMCACHE_LOG", "true")
 }
