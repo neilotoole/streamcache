@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,7 +20,7 @@ import (
 
 const (
 	numSampleRows = 4321
-	numG          = 500
+	numG          = 2000
 
 	anything = "anything"
 )
@@ -173,7 +172,7 @@ func TestReader_NoSeal(t *testing.T) {
 
 func TestStream_File(t *testing.T) {
 	ctx := context.Background()
-	sampleSize, fp := generateSampleFile(t, numSampleRows)
+	wantSize, fp := generateSampleFile(t, numSampleRows)
 	wantData, err := os.ReadFile(fp)
 	require.NoError(t, err)
 
@@ -189,20 +188,20 @@ func TestStream_File(t *testing.T) {
 
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
-	requireTotal(t, s, sampleSize)
+	requireTotal(t, s, wantSize)
 	requireTake(t, s.SourceDone())
 	requireNoTake(t, s.ReadersDone())
-	require.Equal(t, sampleSize, s.Size())
+	require.Equal(t, wantSize, s.Size())
 	require.True(t, errors.Is(s.Err(), io.EOF))
 
 	require.Equal(t, string(wantData), string(gotData))
 
 	assert.NoError(t, r.Close())
 	assert.Equal(t, 1, recorder.closeCount)
-	require.Equal(t, sampleSize, s.Size())
+	require.Equal(t, wantSize, s.Size())
 	requireTake(t, s.SourceDone())
 	requireTake(t, s.ReadersDone())
-	requireTotal(t, s, sampleSize)
+	requireTotal(t, s, wantSize)
 }
 
 func TestStream_File_Concurrent_SealLate(t *testing.T) {
@@ -228,6 +227,7 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 			gotData, err := io.ReadAll(r)
 			assert.NoError(t, err)
 			assert.Equal(t, string(wantData), string(gotData))
+			requireTotal(t, s, wantSize)
 		}(r)
 	}
 
@@ -238,6 +238,7 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 	<-s.ReadersDone()
 
 	require.Equal(t, wantSize, s.Size())
+	requireTotal(t, s, wantSize)
 }
 
 func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
@@ -283,7 +284,9 @@ func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 			}
 
 			gotData, gotErr := io.ReadAll(r)
-			assert.NoError(t, gotErr)
+			require.NoError(t, gotErr)
+			requireTotal(t, s, wantSize)
+			requireTake(t, s.SourceDone())
 
 			assert.Equal(t, string(wantData), string(gotData))
 		}(i, rdrs[i])
@@ -294,6 +297,8 @@ func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 
 	assert.NoError(t, err)
 	require.Equal(t, wantSize, s.Size())
+	requireTotal(t, s, wantSize)
+	requireTake(t, s.SourceDone())
 }
 
 func TestSeal_AlreadySealed(t *testing.T) {
@@ -308,6 +313,10 @@ func TestSeal_AlreadySealed(t *testing.T) {
 	require.Panics(t, func() {
 		_ = s.NewReader(ctx)
 	}, "should panic because stream is already sealed")
+
+	requireNoTotal(t, s)
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
 }
 
 func TestSeal_AfterRead(t *testing.T) {
@@ -321,11 +330,18 @@ func TestSeal_AfterRead(t *testing.T) {
 	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
 	require.Equal(t, want, string(gotData1))
+	requireTotal(t, s, len(want))
+	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.ReadersDone())
 
 	r2 := s.NewReader(ctx)
 	require.NoError(t, err)
 
 	s.Seal()
+
+	requireTotal(t, s, len(want))
+	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.ReadersDone())
 
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
@@ -399,46 +415,27 @@ func TestClose(t *testing.T) {
 	recorder := &rcRecorder{r: strings.NewReader(anything)}
 	s := streamcache.New(recorder)
 
+	requireNoTake(t, s.ReadersDone())
 	r1 := s.NewReader(ctx)
 
 	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
 	require.Equal(t, wantData, gotData1)
+	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.ReadersDone())
 	require.NoError(t, r1.Close())
+	requireNoTake(t, s.ReadersDone())
 	require.Equal(t, 0, recorder.closeCount)
 
 	r2 := s.NewReader(ctx)
 	s.Seal()
 
+	requireNoTake(t, s.ReadersDone())
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, wantData, gotData2)
+	requireNoTake(t, s.ReadersDone())
 	require.NoError(t, r2.Close())
+	requireTake(t, s.ReadersDone())
 	require.Equal(t, 1, recorder.closeCount)
-}
-
-// generateSampleFile generates a temp file of sample data with the
-// specified number of rows. It is the caller's responsibility to
-// close the file. Note that the file is removed by t.Cleanup.
-func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
-	f, err := os.CreateTemp("", "")
-	require.NoError(t, err)
-	fp = f.Name()
-
-	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z"
-	for i := 0; i < rows; i++ {
-		// Actual data lines will look like:
-		//  0,A,B,C...
-		//  1,A,B,C...
-		s := strconv.Itoa(i) + "," + line
-		_, err = fmt.Fprintln(f, s)
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, f.Close())
-	fi, err := os.Stat(fp)
-	require.NoError(t, err)
-	size = int(fi.Size())
-	t.Logf("Generated sample file [%d]: %s", size, fp)
-	return int(fi.Size()), fp
 }

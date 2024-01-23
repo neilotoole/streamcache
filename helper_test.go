@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	mrand "math/rand"
+	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -216,6 +218,32 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	<-wait
 	require.NoError(t, err)
 	require.Equal(t, want, size)
+}
+
+// generateSampleFile generates a temp file of sample data with the
+// specified number of rows. It is the caller's responsibility to
+// close the file. Note that the file is removed by t.Cleanup.
+func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
+	f, err := os.CreateTemp("", "")
+	require.NoError(t, err)
+	fp = f.Name()
+
+	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z"
+	for i := 0; i < rows; i++ {
+		// Actual data lines will look like:
+		//  0,A,B,C...
+		//  1,A,B,C...
+		s := strconv.Itoa(i) + "," + line
+		_, err = fmt.Fprintln(f, s)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, f.Close())
+	fi, err := os.Stat(fp)
+	require.NoError(t, err)
+	size = int(fi.Size())
+	t.Logf("Generated sample file [%d]: %s", size, fp)
+	return int(fi.Size()), fp
 }
 
 // FIXME: delete enableLogging.
