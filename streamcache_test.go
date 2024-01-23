@@ -31,17 +31,15 @@ func TestStream(t *testing.T) {
 	ctx := context.Background()
 
 	s := streamcache.New(strings.NewReader(anything))
-	require.False(t, readersDone(s))
-	select {
-	case <-s.ReadersDone():
-		t.Fatal("s.ReadersDone() should not be closed")
-	default:
-	}
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
 	require.Equal(t, 0, s.Size())
 	require.Nil(t, s.Err())
 	require.Equal(t, -1, s.ErrAt())
 
 	r := s.NewReader(ctx)
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
 
 	// We'll read half the bytes.
 	buf := make([]byte, 4)
@@ -56,12 +54,7 @@ func TestStream(t *testing.T) {
 	// Seal the source; after this, no more readers can be created.
 	s.Seal()
 	require.True(t, s.Sealed())
-	require.False(t, readersDone(s))
-	select {
-	case <-s.ReadersDone():
-		t.Fatal("s.ReadersDone() should not be closed")
-	default:
-	}
+	requireNoTake(t, s.ReadersDone())
 
 	require.Panics(t, func() {
 		_ = s.NewReader(ctx)
@@ -85,7 +78,7 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
-	require.False(t, readersDone(s))
+	requireNoTake(t, s.ReadersDone())
 
 	// Read one more time, and we should get io.EOF again.
 	gotN, gotErr = r.Read(buf)
@@ -96,24 +89,17 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
-	require.False(t, readersDone(s))
+	requireNoTake(t, s.ReadersDone())
 
 	// Close the reader, which should close the underlying source.
 	gotErr = r.Close()
 	require.NoError(t, gotErr)
-	require.True(t, readersDone(s))
-
-	select {
-	case <-s.ReadersDone():
-		// Expected
-	default:
-		t.Fatal("cache.ReadersDone() should be closed")
-	}
+	requireTake(t, s.ReadersDone())
 
 	// Closing again should be no-op.
 	gotErr = r.Close()
 	require.Nil(t, gotErr)
-	require.True(t, readersDone(s))
+	requireTake(t, s.ReadersDone())
 }
 
 func TestReaderAlreadyClosed(t *testing.T) {
@@ -141,7 +127,7 @@ func TestSingleReaderImmediateSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, anything, string(gotData))
 	require.NoError(t, r.Close())
-	require.True(t, readersDone(s))
+	requireTake(t, s.ReadersDone())
 }
 
 func TestReader_NoSeal(t *testing.T) {
@@ -153,7 +139,8 @@ func TestReader_NoSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, anything, string(gotData))
 	require.NoError(t, r.Close())
-	require.False(t, readersDone(s), "not closed because not sealed")
+	requireNoTake(t, s.ReadersDone(), "not done because not sealed")
+	requireTake(t, s.SourceDone())
 	require.Equal(t, io.EOF, s.Err())
 }
 
@@ -214,11 +201,7 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 		}(r)
 	}
 
-	select {
-	case <-s.ReadersDone():
-		t.Fatal("Shouldn't be done because not sealed")
-	default:
-	}
+	requireNoTake(t, s.ReadersDone())
 
 	s.Seal()
 
@@ -452,11 +435,20 @@ func sleepJitter() {
 	time.Sleep(d)
 }
 
-func readersDone(s *streamcache.Stream) bool {
+func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
+	t.Helper()
 	select {
-	case <-s.ReadersDone():
-		return true
+	case <-c:
+		require.Fail(t, "unexpected take from channel", msgAndArgs...)
 	default:
-		return false
+	}
+}
+
+func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
+	t.Helper()
+	select {
+	case <-c:
+	default:
+		require.Fail(t, "unexpected failure to take from channel", msgAndArgs...)
 	}
 }
