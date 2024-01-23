@@ -3,12 +3,18 @@ package streamcache_test
 // File helper_test.go contains test helper functionality.
 
 import (
+	"context"
 	crand "crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	mrand "math/rand"
 	"sync"
+	"testing"
 	"time"
+
+	"github.com/neilotoole/streamcache"
+	"github.com/stretchr/testify/require"
 )
 
 var _ io.Reader = (*delayReader)(nil)
@@ -102,4 +108,111 @@ func (r *errorAfterNReader) Read(p []byte) (n int, err error) {
 // from crypto/rand.Reader.
 func newLimitRandReader(limit int64) io.Reader {
 	return io.LimitReader(crand.Reader, limit)
+}
+
+var _ io.Reader = (*rcRecorder)(nil)
+
+// rcRecorder wraps an io.Reader and records stats.
+type rcRecorder struct {
+	r          io.Reader
+	closeCount int
+	size       int
+	mu         sync.Mutex
+}
+
+func (rc *rcRecorder) Read(p []byte) (n int, err error) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
+	n, err = rc.r.Read(p)
+	rc.size += n
+	return n, err
+}
+
+// Close implements io.Close, and increments its closed field each
+// time that Close is invoked.
+func (rc *rcRecorder) Close() error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.closeCount++
+	if c, ok := rc.r.(io.ReadCloser); ok {
+		return c.Close()
+	}
+
+	return nil
+}
+
+func sleepJitter() {
+	d := time.Millisecond * time.Duration(mrand.Intn(jitterFactor))
+	time.Sleep(d)
+}
+
+func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
+	t.Helper()
+	select {
+	case <-c:
+		require.Fail(t, "unexpected take from channel", msgAndArgs...)
+	default:
+	}
+}
+
+func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
+	t.Helper()
+	select {
+	case <-c:
+	default:
+		require.Fail(t, "unexpected failure to take from channel", msgAndArgs...)
+	}
+}
+
+func enableLogging(t *testing.T) { //nolint:unused
+	t.Setenv("STREAMCACHE_LOG", "true")
+}
+
+func requireTotalBlocks(t *testing.T, s *streamcache.Stream) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	time.AfterFunc(time.Millisecond*10, func() {
+		cancel()
+	})
+
+	var (
+		size int
+		err  error
+		wait = make(chan struct{})
+	)
+
+	go func() {
+		size, err = s.Total(ctx)
+		wait <- struct{}{}
+	}()
+
+	<-wait
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.Canceled))
+	require.Equal(t, 0, size)
+}
+
+func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	time.AfterFunc(time.Millisecond*10, func() {
+		cancel()
+	})
+
+	var (
+		err  error
+		size int
+		wait = make(chan struct{})
+	)
+	go func() {
+		size, err = s.Total(ctx)
+		wait <- struct{}{}
+	}()
+
+	<-wait
+	require.NoError(t, err)
+	require.Equal(t, want, size)
 }

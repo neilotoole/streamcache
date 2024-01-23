@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ const (
 
 func TestStream(t *testing.T) {
 	t.Parallel()
+
 	ctx := context.Background()
 
 	s := streamcache.New(strings.NewReader(anything))
@@ -36,10 +36,12 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 0, s.Size())
 	require.Nil(t, s.Err())
 	require.Equal(t, -1, s.ErrAt())
+	requireTotalBlocks(t, s)
 
 	r := s.NewReader(ctx)
 	requireNoTake(t, s.ReadersDone())
 	requireNoTake(t, s.SourceDone())
+	requireTotalBlocks(t, s)
 
 	// We'll read half the bytes.
 	buf := make([]byte, 4)
@@ -50,11 +52,14 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 4, streamcache.ReaderOffset(r))
 	require.Equal(t, 4, s.Size())
 	require.Equal(t, 4, len(streamcache.CacheInternal(s)))
+	requireTotalBlocks(t, s)
 
 	// Seal the source; after this, no more readers can be created.
 	s.Seal()
 	require.True(t, s.Sealed())
 	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
+	requireTotalBlocks(t, s)
 
 	require.Panics(t, func() {
 		_ = s.NewReader(ctx)
@@ -64,6 +69,7 @@ func TestStream(t *testing.T) {
 	gotN, gotErr = r.Read(buf)
 	require.NoError(t, gotErr)
 	require.Nil(t, s.Err())
+	requireTotalBlocks(t, s)
 	require.Equal(t, 4, gotN)
 	require.Equal(t, "hing", string(buf))
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
@@ -75,6 +81,7 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 0, gotN)
 	require.Equal(t, io.EOF, gotErr)
 	require.Equal(t, io.EOF, s.Err())
+	requireTotal(t, s, 8)
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
@@ -90,16 +97,19 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
 	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.SourceDone())
 
 	// Close the reader, which should close the underlying source.
 	gotErr = r.Close()
 	require.NoError(t, gotErr)
 	requireTake(t, s.ReadersDone())
+	requireTake(t, s.SourceDone())
 
 	// Closing again should be no-op.
 	gotErr = r.Close()
 	require.Nil(t, gotErr)
 	requireTake(t, s.ReadersDone())
+	requireTake(t, s.SourceDone())
 }
 
 func TestReaderAlreadyClosed(t *testing.T) {
@@ -394,63 +404,4 @@ func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
 	size = int(fi.Size())
 	t.Logf("Generated sample file [%d]: %s", size, fp)
 	return int(fi.Size()), fp
-}
-
-var _ io.Reader = (*rcRecorder)(nil)
-
-// rcRecorder wraps an io.Reader and records stats.
-type rcRecorder struct {
-	r          io.Reader
-	closeCount int
-	size       int
-	mu         sync.Mutex
-}
-
-func (rc *rcRecorder) Read(p []byte) (n int, err error) {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-
-	n, err = rc.r.Read(p)
-	rc.size += n
-	return n, err
-}
-
-// Close implements io.Close, and increments its closed field each
-// time that Close is invoked.
-func (rc *rcRecorder) Close() error {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	rc.closeCount++
-	if c, ok := rc.r.(io.ReadCloser); ok {
-		return c.Close()
-	}
-
-	return nil
-}
-
-func sleepJitter() {
-	d := time.Millisecond * time.Duration(rand.Intn(jitterFactor))
-	time.Sleep(d)
-}
-
-func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
-	t.Helper()
-	select {
-	case <-c:
-		require.Fail(t, "unexpected take from channel", msgAndArgs...)
-	default:
-	}
-}
-
-func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
-	t.Helper()
-	select {
-	case <-c:
-	default:
-		require.Fail(t, "unexpected failure to take from channel", msgAndArgs...)
-	}
-}
-
-func enableLogging(t *testing.T) { //nolint:unused
-	t.Setenv("STREAMCACHE_LOG", "true")
 }
