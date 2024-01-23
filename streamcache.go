@@ -296,6 +296,10 @@ TOP:
 		s.cache = append(s.cache, p[:n]...)
 	}
 
+	if err != nil {
+		close(s.srcDoneCh)
+	}
+
 	// We're done updating the cache, so we can release the write and src
 	// locks, and return.
 	s.writeUnlock(r)
@@ -338,6 +342,10 @@ func (s *Stream) fillFromCache(p []byte, offset int) (n int, err error) {
 //     combine bytes from both. The subsequent read will be direct
 //     from src and thus cache can be nilled.
 func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
+	if s.readErr != nil && offset+len(p) >= s.size {
+		return s.fillFromCache(p, offset)
+	}
+
 	end := offset + len(p)
 	switch {
 	case end < s.size:
@@ -397,6 +405,9 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	s.size += n2
 	s.readErr = err
 	n += n2
+	if err != nil {
+		close(s.srcDoneCh)
+	}
 	s.writeUnlock(r)
 	// Any subsequent reads will be direct from src.
 	r.readFn = s.readSrcDirect
