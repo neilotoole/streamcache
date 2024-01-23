@@ -1,6 +1,7 @@
 package streamcache_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,8 +22,8 @@ import (
 const (
 	numSampleRows = 4321
 	numG          = 500
-	jitterFactor  = 30
-	anything      = "anything"
+
+	anything = "anything"
 )
 
 func TestStream(t *testing.T) {
@@ -36,12 +37,12 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 0, s.Size())
 	require.Nil(t, s.Err())
 	require.Equal(t, -1, s.ErrAt())
-	requireTotalBlocks(t, s)
+	requireNoTotal(t, s)
 
 	r := s.NewReader(ctx)
 	requireNoTake(t, s.ReadersDone())
 	requireNoTake(t, s.SourceDone())
-	requireTotalBlocks(t, s)
+	requireNoTotal(t, s)
 
 	// We'll read half the bytes.
 	buf := make([]byte, 4)
@@ -52,14 +53,16 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 4, streamcache.ReaderOffset(r))
 	require.Equal(t, 4, s.Size())
 	require.Equal(t, 4, len(streamcache.CacheInternal(s)))
-	requireTotalBlocks(t, s)
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
+	requireNoTotal(t, s)
 
 	// Seal the source; after this, no more readers can be created.
 	s.Seal()
 	require.True(t, s.Sealed())
 	requireNoTake(t, s.ReadersDone())
 	requireNoTake(t, s.SourceDone())
-	requireTotalBlocks(t, s)
+	requireNoTotal(t, s)
 
 	require.Panics(t, func() {
 		_ = s.NewReader(ctx)
@@ -69,7 +72,9 @@ func TestStream(t *testing.T) {
 	gotN, gotErr = r.Read(buf)
 	require.NoError(t, gotErr)
 	require.Nil(t, s.Err())
-	requireTotalBlocks(t, s)
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
+	requireNoTotal(t, s)
 	require.Equal(t, 4, gotN)
 	require.Equal(t, "hing", string(buf))
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
@@ -82,10 +87,11 @@ func TestStream(t *testing.T) {
 	require.Equal(t, io.EOF, gotErr)
 	require.Equal(t, io.EOF, s.Err())
 	requireTotal(t, s, 8)
+	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.ReadersDone())
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
-	requireNoTake(t, s.ReadersDone())
 
 	// Read one more time, and we should get io.EOF again.
 	gotN, gotErr = r.Read(buf)
@@ -96,18 +102,21 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
+	requireTotal(t, s, 8)
 	requireNoTake(t, s.ReadersDone())
 	requireTake(t, s.SourceDone())
 
 	// Close the reader, which should close the underlying source.
 	gotErr = r.Close()
 	require.NoError(t, gotErr)
+	requireTotal(t, s, 8)
 	requireTake(t, s.ReadersDone())
 	requireTake(t, s.SourceDone())
 
 	// Closing again should be no-op.
 	gotErr = r.Close()
 	require.Nil(t, gotErr)
+	requireTotal(t, s, 8)
 	requireTake(t, s.ReadersDone())
 	requireTake(t, s.SourceDone())
 }
@@ -124,6 +133,9 @@ func TestReaderAlreadyClosed(t *testing.T) {
 	_, err = r.Read(buf)
 	require.Error(t, err)
 	require.Equal(t, streamcache.ErrAlreadyClosed, err)
+	requireNoTotal(t, s)
+	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.SourceDone())
 }
 
 func TestSingleReaderImmediateSeal(t *testing.T) {
@@ -133,9 +145,12 @@ func TestSingleReaderImmediateSeal(t *testing.T) {
 	r := s.NewReader(context.Background())
 	s.Seal()
 
+	requireNoTotal(t, s)
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
+	requireTotal(t, s, len(anything))
 	require.Equal(t, anything, string(gotData))
+	requireNoTake(t, s.ReadersDone())
 	require.NoError(t, r.Close())
 	requireTake(t, s.ReadersDone())
 }
@@ -152,6 +167,7 @@ func TestReader_NoSeal(t *testing.T) {
 	requireNoTake(t, s.ReadersDone(), "not done because not sealed")
 	requireTake(t, s.SourceDone())
 	require.Equal(t, io.EOF, s.Err())
+	requireTotal(t, s, len(anything))
 }
 
 func TestStream_File(t *testing.T) {
@@ -351,6 +367,23 @@ func TestErrorHandling(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, wantErr))
 	require.Equal(t, errAfterN, len(gotData2))
+}
+
+func TestSizeTotal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	wantData := make([]byte, 0)
+	s := streamcache.New(bytes.NewReader(wantData))
+	require.Equal(t, 0, s.Size())
+	requireNoTotal(t, s)
+
+	r := s.NewReader(ctx)
+	gotData, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, wantData, gotData)
+	require.Equal(t, 0, s.Size())
+	requireTotal(t, s, 0)
 }
 
 func TestClose(t *testing.T) {

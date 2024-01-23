@@ -143,6 +143,7 @@ func (rc *rcRecorder) Close() error {
 }
 
 func sleepJitter() {
+	const jitterFactor = 30
 	d := time.Millisecond * time.Duration(mrand.Intn(jitterFactor))
 	time.Sleep(d)
 }
@@ -165,7 +166,8 @@ func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	}
 }
 
-func requireTotalBlocks(t *testing.T, s *streamcache.Stream) {
+// requireNoTotal requires that s.Total blocks.
+func requireNoTotal(t *testing.T, s *streamcache.Stream) {
 	t.Helper()
 
 	failErr := errors.New("fail")
@@ -191,6 +193,8 @@ func requireTotalBlocks(t *testing.T, s *streamcache.Stream) {
 	require.Equal(t, 0, size)
 }
 
+// requireTotal requires that s.Total doesn't block, and
+// returns want and no error.
 func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	t.Helper()
 
@@ -214,7 +218,7 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	require.Equal(t, want, size)
 }
 
-// FIXME: delete enableLogging
+// FIXME: delete enableLogging.
 func enableLogging(t *testing.T) { //nolint:unused
 	t.Setenv("STREAMCACHE_LOG", "true")
 }
