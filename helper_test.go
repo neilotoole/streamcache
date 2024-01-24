@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neilotoole/streamcache"
 	"github.com/stretchr/testify/require"
+
+	"github.com/neilotoole/streamcache"
 )
 
 var _ io.Reader = (*delayReader)(nil)

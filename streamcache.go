@@ -1,6 +1,8 @@
-// Package streamcache implements a cache mechanism that allows
-// multiple callers to read some or all of the contents of a
-// source reader, while only reading from the source reader once.
+// Package streamcache implements an in-memory cache mechanism that allows
+// multiple callers to read some or all of the contents of a source reader,
+// while only reading from the source reader once; when there's only one
+// final reader remaining, the cache is discarded and the final reader
+// reads directly from the source.
 //
 // Let's say we're reading from stdin. For example:
 //
@@ -132,6 +134,8 @@ func New(src io.Reader) *Stream {
 //
 // NewReader panics if s is already sealed via Stream.Seal (but note that
 // you can first test via Stream.Sealed).
+//
+// See: Reader.Read, Reader.Close.
 func (s *Stream) NewReader(ctx context.Context) *Reader {
 	s.cMu.Lock()
 	defer s.cMu.Unlock()
@@ -430,7 +434,13 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 //	}
 //
 // The returned channel is closed after Seal has been invoked on it, and there
-// are zero unclosed Reader instances remaining. Note that Stream.Err returning a
+// are zero unclosed Reader instances remaining.
+//
+// IMPORTANT: Don't wait on the ReadersDone channel without also calling Stream.Seal,
+// as you may well end up in deadlock. The returned channel will never be closed
+// unless Stream.Seal is invoked.
+//
+// Note that Stream.Err returning a
 // non-nil value does not of itself indicate that the readers are done. There
 // could be other readers still consuming earlier parts of the cache.
 //
@@ -611,8 +621,18 @@ type Reader struct {
 // however that Read can still block on reading from the Stream source. If this
 // reader has already been closed via Reader.Close, Read will return ErrAlreadyClosed.
 // If a previous invocation of Read returned an error from the source, that
-// error is returned. Otherwise Read reads from Stream, which may return bytes
-// from Stream's cache or new bytes from the source, or a combination of both.
+// error is returned.
+//
+// Otherwise Read reads from Stream, which may return bytes from Stream's cache
+// or new bytes from the source, or a combination of both. Note in particular
+// that Read preferentially returns available bytes from the cache rather than
+// waiting to read from the source, even that means the returned n < len(p).
+// This is in line with the io.Reader convention:
+//
+//	If some data is available but not len(p) bytes, Read conventionally
+//	returns what is available instead of waiting for more.
+//
+// Use io.ReadFull or io.ReadAtLeast if you want to ensure that p is filled.
 func (r *Reader) Read(p []byte) (n int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -634,6 +654,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	}
 
 	n, err = r.readFn(r, p, r.offset)
+
 	r.readErr = err
 	r.offset += n
 	return n, err

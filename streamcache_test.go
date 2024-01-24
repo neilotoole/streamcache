@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neilotoole/streamcache"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/neilotoole/streamcache"
 )
 
 const (
@@ -439,4 +439,39 @@ func TestClose(t *testing.T) {
 	require.NoError(t, r2.Close())
 	requireTake(t, s.ReadersDone())
 	require.Equal(t, 1, recorder.closeCount)
+}
+
+// TestReader_Read_PartialCacheHit tests the scenario where
+// a Reader.Read request is only partially satisfied by Stream's
+// cache. Reader.Read will return the bytes available to
+// it in the cache, thus the returned n may be < len(p).
+func TestReader_Read_PartialCacheHit(t *testing.T) {
+	ctx := context.Background()
+	s := streamcache.New(strings.NewReader(anything))
+
+	r1 := s.NewReader(ctx)
+	buf1 := make([]byte, 3)
+	n1, err := r1.Read(buf1)
+	require.NoError(t, err)
+	require.Equal(t, 3, n1)
+	require.Equal(t, 3, s.Size())
+
+	r2 := s.NewReader(ctx)
+	buf2 := make([]byte, 5)
+	n2, err := r2.Read(buf2)
+	require.NoError(t, err)
+	require.Equal(t, 3, n2)
+	require.Equal(t, 3, s.Size())
+
+	buf2 = make([]byte, 10)
+	n2, err = r2.Read(buf2)
+	require.NoError(t, err)
+	require.Equal(t, 5, n2)
+	require.Equal(t, len(anything), s.Size())
+
+	r3 := s.NewReader(ctx)
+	buf3 := make([]byte, 10)
+	n3, err := io.ReadFull(r3, buf3)
+	require.Equal(t, len(anything), n3)
+	require.True(t, errors.Is(err, io.ErrUnexpectedEOF))
 }
