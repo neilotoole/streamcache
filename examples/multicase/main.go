@@ -50,18 +50,14 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	toUpper := func(s string) string {
 		return colorize(ansiRed, strings.ToUpper(s))
 	}
-
 	toLower := func(s string) string {
 		return colorize(ansiGreen, strings.ToLower(s))
 	}
-
 	toTitle := func(s string) string {
 		return colorize(ansiBlue, strings.Title(s)) //nolint:staticcheck
 	}
-
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
-	// s := streamcache.New(log, &prompter{in: in, out: out}) // FIXME: delete
 	s := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
 	var err error
@@ -113,22 +109,6 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		err = nil
 	}
 	return err
-}
-
-var _ io.Reader = (*prompter)(nil)
-
-// prompter is an io.Reader that writes a prompt to out before
-// reading from in.
-type prompter struct {
-	in  io.Reader
-	out io.Writer
-}
-
-// Read implements io.Reader. It renders a prompt to out before
-// reading from in.
-func (pr *prompter) Read(p []byte) (n int, err error) {
-	fmt.Fprintln(pr.out, ansiFaint+"Enter text and press [RETURN]"+ansiReset)
-	return pr.in.Read(p)
 }
 
 func colorize(ansi, s string) string {
