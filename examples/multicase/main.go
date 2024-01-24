@@ -81,11 +81,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	for i := range transforms {
 		go func(i int) {
 			r, t := rdrs[i], transforms[i]
-			defer func() {
-				if closeErr := r.Close(); closeErr != nil {
-					errCh <- closeErr
-				}
-			}()
+			defer r.Close()
 
 			sc := bufio.NewScanner(r)
 			for sc.Scan() {
