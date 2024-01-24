@@ -1,8 +1,8 @@
 # streamcache: in-memory caching stream reader
 
-![Go Reference](https://pkg.go.dev/badge/github.com/neilotoole/streamcache.svg)](https://pkg.go.dev/github.com/neilotoole/streamcache)
-![Go Report Card](https://goreportcard.com/badge/neilotoole/streamcache)](https://goreportcard.com/report/neilotoole/streamcache)
-![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/neilotoole/streamcache/blob/master/LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/neilotoole/streamcache.svg)](https://pkg.go.dev/github.com/neilotoole/streamcache)
+[![Go Report Card](https://goreportcard.com/badge/neilotoole/streamcache)](https://goreportcard.com/report/neilotoole/streamcache)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/neilotoole/streamcache/blob/master/LICENSE)
 ![Workflow](https://github.com/neilotoole/streamcache/actions/workflows/go.yml/badge.svg)
 
 
