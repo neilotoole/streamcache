@@ -128,7 +128,7 @@ func New(src io.Reader) *Stream {
 
 // NewReader returns a new Reader from Stream. If ctx is non-nil, it is
 // checked for cancellation at the start of Reader.Read (and possibly
-// at some other checkpoints).
+// at other checkpoints).
 //
 // It is the caller's responsibility to close the returned Reader.
 //
@@ -137,8 +137,8 @@ func New(src io.Reader) *Stream {
 //
 // See: Reader.Read, Reader.Close.
 func (s *Stream) NewReader(ctx context.Context) *Reader {
-	s.cMu.Lock()
-	defer s.cMu.Unlock()
+	s.cMu.Lock()         // write lock
+	defer s.cMu.Unlock() // write unlock
 
 	if s.sealed {
 		panic("streamcache: Stream.NewReader invoked on sealed Stream")
@@ -418,6 +418,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 // Done returns a channel that is closed when the Stream is
 // sealed and all remaining readers are closed.
 //
+//	s.Seal()
 //	select {
 //	case <-s.Done():
 //	  fmt.Println("All readers are done")
@@ -610,7 +611,7 @@ type Reader struct {
 
 // Read reads from the stream. If a non-nil context was provided to Stream.NewReader
 // to create this Reader, that context is checked at the start of each call
-// to Read (and possibly at some other checkpoints): if the context has been
+// to Read (and possibly at other checkpoints): if the context has been
 // canceled, Read will return the context's error via context.Cause. Note
 // however that Read can still block on reading from the Stream source. If this
 // reader has already been closed via Reader.Close, Read will return ErrAlreadyClosed.

@@ -347,6 +347,16 @@ func TestSeal_AfterRead(t *testing.T) {
 	require.Equal(t, want, string(gotData2))
 }
 
+func TestSeal_NoReaders(t *testing.T) {
+	t.Parallel()
+
+	s := streamcache.New(strings.NewReader(anything))
+	s.Seal()
+	requireTake(t, s.Done())
+	requireNoTake(t, s.Filled())
+	requireNoTotal(t, s)
+}
+
 func TestContextAwareness(t *testing.T) {
 	t.Parallel()
 
