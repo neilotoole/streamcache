@@ -26,6 +26,7 @@ import (
 	"github.com/neilotoole/streamcache"
 )
 
+// main sets up the CLI, and invokes exec to do the actual work.
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	var err error
@@ -46,20 +47,21 @@ func main() {
 
 	// Determine if input is coming from stdin (`cat FILE | typedetect`),
 	// or via args (`typedetect FILE`).
-	var in *os.File
-	fi, err := os.Stdin.Stat()
-	if err != nil {
+
+	var fi os.FileInfo
+	if fi, err = os.Stdin.Stat(); err != nil {
 		printErr(err)
 		return
 	}
 
+	var in *os.File
 	if os.ModeNamedPipe&fi.Mode() > 0 || fi.Size() > 0 {
 		// Input is from stdin.
 		if len(os.Args) > 1 {
 			// If input is from stdin, then we don't want any args.
-			// E.g. `cat FILE | typedetect` is ok,
-			// but `cat FILE | typedetect FILE` is not.
-			err = usageErr
+			// - `cat FILE | typedetect` is ok, but...
+			// - `cat FILE | typedetect FILE` is not.
+			err = errUsage
 			printErr(err)
 			return
 		}
@@ -67,7 +69,7 @@ func main() {
 	} else {
 		// Input is from args, e.g. `typedetect FILE`.
 		if len(os.Args) != 2 || (os.Args[1] == "") {
-			err = usageErr
+			err = errUsage
 			printErr(err)
 			return
 		}
@@ -79,19 +81,20 @@ func main() {
 		defer in.Close()
 	}
 
-	// CLI is set up, now we can get on with the work.
+	// The CLI is set up, now we can get on with the work.
 	if err = exec(ctx, in, os.Stdout); err != nil {
 		printErr(err)
 	}
 }
 
+// exec does the actual work of typedetect.
 func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	detectors := []detectFunc{detectJSON, detectXML}
 
-	s := streamcache.New(in)
+	stream := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(detectors))
 	for i := range detectors {
-		rdrs[i] = s.NewReader(ctx)
+		rdrs[i] = stream.NewReader(ctx)
 	}
 
 	detectionCh := make(chan string, len(detectors))
@@ -110,54 +113,41 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 
 	wg.Wait()
-	close(detectionCh)
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.ReadersDone():
-		// The stream can't be done until outputRdr is closed,
-		// which obviously hasn't happened yet, so this stream
-		// done scenario must be an error.
-		if err := s.Err(); err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-	default:
-	}
 
 	// In theory multiple detectors could succeed, so we
 	// gather all the results and print them.
-	var detectedTypes []string
+	close(detectionCh)
+	var types []string
 	for typ := range detectionCh {
-		detectedTypes = append(detectedTypes, typ)
+		types = append(types, typ)
 	}
 
-	if len(detectedTypes) == 0 {
+	if len(types) == 0 {
 		fmt.Fprintln(out, colorize(ansiRed, "typedetect: unable to detect type"))
 		// Even if we can't detect the type, we still continue below
-		// tp print the head and tail preview.
+		// to print the head and tail preview.
 	} else {
-		fmt.Fprint(out,
-			colorize(ansiGreen, "typedetect: "+strings.Join(detectedTypes, ", "))+"\n")
+		fmt.Fprint(out, colorize(ansiGreen, "typedetect: "+strings.Join(types, ", "))+"\n")
 	}
 
-	// previewRdr reads the content, prints the head and tail, each
-	// up to numPreviewLines lines.
-	previewRdr := s.NewReader(ctx)
+	// previewRdr reads the content, from which we print the head
+	// and tail, each up to numPreviewLines lines.
+	previewRdr := stream.NewReader(ctx)
 	defer previewRdr.Close()
 
 	// There will be no new readers after this point, so we can
 	// seal the stream. This results in previewRdr switching to
 	// reading directly from the source reader, as soon as it has
-	// exhausted the stream's cache. This mode switch is transparent
-	// to the caller of course; streamcache takes care of it.
-	s.Seal()
+	// exhausted the stream's cache. This mode switch is internal
+	// to streamcache; the caller knows nothing of it.
+	stream.Seal()
 
 	// Scan and print up to numPreviewLines from input head.
 	var lineCount int
 	sc := bufio.NewScanner(previewRdr)
 	for i := 0; i < numPreviewLines && sc.Scan(); i++ {
 		select {
+		// Offer a chance to bail out early on Ctrl-C.
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
@@ -170,7 +160,7 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		return err
 	}
 
-	// Use a channel as a sliding window / circular buffer of lines
+	// Use a channel as a sliding window / circular buffer of input lines
 	// so that, at the end, we can print the final numPreviewLines of
 	// the tail, and just skip the stuff in the middle.
 	window := make(chan string, numPreviewLines)
@@ -191,8 +181,8 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 		lineCount++
 	}
 
-	if sc.Err() != nil {
-		return sc.Err()
+	if err := sc.Err(); err != nil {
+		return err
 	}
 
 	// We're done with processing the input now. We can
@@ -201,14 +191,15 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	skipCount := lineCount - len(window) - numPreviewLines
 	if skipCount > 0 {
-		fmt.Fprintln(out, colorize(ansiGreen, fmt.Sprintf("[Skipped %d lines]", skipCount)))
+		skipMsg := fmt.Sprintf("[Skipped %d lines]", skipCount)
+		fmt.Fprintln(out, colorize(ansiGreen, skipMsg))
 	}
 
 	for line = range window {
 		printPreviewLine(out, line)
 	}
 
-	summary := fmt.Sprintf("%d lines (%d bytes)", lineCount, s.Size())
+	summary := fmt.Sprintf("%d lines (%d bytes)", lineCount, stream.Size())
 	fmt.Fprintln(out, colorize(ansiGreen, summary))
 	return nil
 }
@@ -275,7 +266,7 @@ const (
 	// is truncate before printing.
 	maxPreviewLineWidth = 80
 
-	// terminal colors
+	// terminal colors.
 	ansiReset = "\033[0m"
 	ansiFaint = "\033[2m"
 	ansiRed   = "\033[31m"
@@ -303,4 +294,4 @@ func printErr(err error) {
 	fmt.Fprintln(os.Stderr, colorize(ansiRed, "typedetect: error: "+err.Error()))
 }
 
-var usageErr = errors.New("usage: `typedetect FILE` or `cat FILE | typedetect`")
+var errUsage = errors.New("usage: `typedetect FILE` or `cat FILE | typedetect`")

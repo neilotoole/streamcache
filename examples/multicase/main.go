@@ -21,6 +21,7 @@ import (
 	"github.com/neilotoole/streamcache"
 )
 
+// main sets up the CLI, and calls exec to do the actual work.
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	var err error
@@ -39,7 +40,16 @@ func main() {
 		cancelFn()
 	}()
 
-	fmt.Fprintln(os.Stdin, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
+	var fi os.FileInfo
+	if fi, err = os.Stdin.Stat(); err != nil {
+		printErr(err)
+		return
+	}
+
+	if os.ModeNamedPipe&fi.Mode() == 0 && fi.Size() == 0 {
+		// No data on stdin, thus interactive mode: print a prompt.
+		fmt.Fprintln(os.Stdout, colorize(ansiFaint, "multicase: enter text and press [ENTER]"))
+	}
 
 	if err = exec(ctx, os.Stdin, os.Stdout); err != nil {
 		printErr(err)
@@ -58,15 +68,14 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 	transforms := []func(string) string{toUpper, toLower, toTitle}
 
-	s := streamcache.New(in)
+	stream := streamcache.New(in)
 	rdrs := make([]*streamcache.Reader, len(transforms))
-	var err error
 	for i := range rdrs {
-		rdrs[i] = s.NewReader(ctx)
+		rdrs[i] = stream.NewReader(ctx)
 	}
 
 	// Seal the stream to indicate no more readers.
-	s.Seal()
+	stream.Seal()
 
 	errCh := make(chan error, 1)
 	for i := range transforms {
@@ -91,18 +100,19 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 				fmt.Fprintln(out, t(text))
 			}
 
-			if err = sc.Err(); err != nil {
+			if err := sc.Err(); err != nil {
 				errCh <- err
 			}
 		}(i)
 	}
 
+	var err error
 	select {
 	case <-ctx.Done():
 		err = ctx.Err()
 	case err = <-errCh:
-	case <-s.ReadersDone():
-		err = s.Err()
+	case <-stream.ReadersDone():
+		err = stream.Err()
 	}
 
 	if errors.Is(err, io.EOF) {

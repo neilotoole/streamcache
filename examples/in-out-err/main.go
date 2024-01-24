@@ -25,6 +25,8 @@ import (
 
 // Write stdin to both stdout and stderr.
 // Some error handling omitted for brevity.
+//
+//nolint:errcheck,revive
 func main() {
 	ctx := context.Background()
 	stream := streamcache.New(os.Stdin)
