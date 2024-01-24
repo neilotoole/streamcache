@@ -68,10 +68,8 @@ func exec(ctx context.Context, in io.Reader, out io.Writer) error {
 	for i := range rdrs {
 		rdrs[i] = s.NewReader(ctx)
 	}
-	rdrs[0].Name = "red-upper"   // FIXME: delete
-	rdrs[1].Name = "blue-lower"  // FIXME: delete
-	rdrs[2].Name = "green-title" // FIXME: delete
 
+	// Seal the stream to indicate no more readers.
 	s.Seal()
 
 	errCh := make(chan error, 1)

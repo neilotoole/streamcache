@@ -164,12 +164,12 @@ var (
 // readSrcDirect reads directly from Stream.src. The src's size is
 // incremented as bytes are read from src, and Stream.readErr is set if
 // src returns an error.
-func (s *Stream) readSrcDirect(r *Reader, p []byte, _ int) (n int, err error) {
+func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	n, err = s.src.Read(p)
 
-	// Get the write lock before updating c's fields.
-	s.writeLock(r)
-	defer s.writeUnlock(r)
+	// Get the write lock before updating s's fields.
+	s.cMu.Lock()         // write lock
+	defer s.cMu.Unlock() // write unlock
 	s.size += n
 	s.readErr = err
 	if err != nil {
@@ -185,13 +185,13 @@ func (s *Stream) readSrcDirect(r *Reader, p []byte, _ int) (n int, err error) {
 // directly against src, bypassing Stream.cache entirely.
 func (s *Stream) readMain(r *Reader, p []byte, offset int) (n int, err error) {
 TOP:
-	s.readLock(r)
+	s.cMu.RLock() // read lock
 
 	if s.sealed && len(s.rdrs) == 1 {
 		// The stream is sealed, and this is the final reader.
 		// We can release the read lock (because this is the only possible
 		// reader), and delegate to readFinal.
-		s.readUnlock(r)
+		s.cMu.RUnlock() // read unlock
 		return s.readFinal(r, p, offset)
 	}
 
@@ -201,7 +201,7 @@ TOP:
 		// we return what we can, and let the caller decide
 		// whether to read more.
 		n, err = s.fillFromCache(p, offset)
-		s.readUnlock(r)
+		s.cMu.RUnlock() // read unlock
 		return n, err
 	}
 
@@ -209,10 +209,10 @@ TOP:
 	// We're going to need to read from src.
 
 	// First we give up the read lock.
-	s.readUnlock(r)
+	s.cMu.RUnlock() // read unlock
 
 	// And try to get the src lock.
-	if !s.srcTryLock(r) {
+	if !s.srcMu.TryLock() { // try src lock
 		// We couldn't get the src lock. Another reader has the src lock,
 		// and could be blocked on io. But, in the time since we released
 		// the read lock above, it's possible that more data was added to
@@ -220,13 +220,12 @@ TOP:
 		// so that r can catch up to the current cache state while some other
 		// reader holds src lock.
 
-		if !s.readTryLock(r) {
+		if !s.cMu.TryRLock() { // try read lock
 			// We couldn't get the read lock, because another reader
 			// is updating the cache after having read from src, and thus
 			// has the write lock. There's only a tiny window where the
 			// write lock is held, so our naive strategy here is to just
 			// go back to the top.
-			logf(r, "try read lock failed; going back to TOP.")
 			goto TOP
 		}
 
@@ -235,7 +234,7 @@ TOP:
 		if s.isSatisfiedFromCache(p, offset) {
 			// Yup, there are bytes available in the cache. Return them.
 			n, err = s.fillFromCache(p, offset)
-			s.readUnlock(r)
+			s.cMu.RUnlock() // read unlock
 			return n, err
 		}
 
@@ -243,14 +242,13 @@ TOP:
 		// So, we really need to get more data from src.
 
 		// First we give up the read lock.
-		s.readUnlock(r)
+		s.cMu.RUnlock() // read unlock
 
 		// And now we acquire the src lock so that we
 		// can read from src.
-		s.srcLock(r)
+		s.srcMu.Lock() // src lock
+		// REVISIT: ^^ why not s.srcMu.LockContext(ctx) ??
 	}
-
-	// FIXME: Should check for context cancellation after each lock?
 
 	// If we've gotten this far, we have the src lock, but not the
 	// read or write lock. We're here because there was nothing new in
@@ -264,7 +262,7 @@ TOP:
 	if s.isSatisfiedFromCache(p, offset) {
 		// There's some new stuff in the cache. Return it.
 		n, err = s.fillFromCache(p, offset)
-		s.srcUnlock(r)
+		s.srcMu.Unlock() // src unlock
 		return n, err
 	}
 
@@ -276,26 +274,23 @@ TOP:
 	if r.ctx != nil {
 		select {
 		case <-r.ctx.Done():
-			s.srcUnlock(r)
+			s.srcMu.Unlock() // src unlock
 			return 0, context.Cause(r.ctx)
 		default:
 		}
 	}
 
 	// OK, this time, we're REALLY going to read from src.
-	logf(r, "Entering src.Read")
 	n, err = s.src.Read(p)
-	logf(r, "Returned from src.Read: n=%d, err=%v", n, err)
-
 	if n == 0 && err == nil {
 		// For this special case, there's no need to update the cache,
 		// so we can just return now.
-		s.srcUnlock(r)
+		s.srcMu.Unlock() // src unlock
 		return 0, nil
 	}
 
 	// Now we need to update the cache, so we need to get the write lock.
-	s.writeLock(r)
+	s.cMu.Lock() // write lock
 	s.readErr = err
 	if n > 0 {
 		s.size += n
@@ -308,8 +303,8 @@ TOP:
 
 	// We're done updating the cache, so we can release the write and src
 	// locks, and return.
-	s.writeUnlock(r)
-	s.srcUnlock(r)
+	s.cMu.Unlock()   // write unlock
+	s.srcMu.Unlock() // src unlock
 	runtime.Gosched()
 	return n, err
 }
@@ -379,10 +374,10 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		n, err = s.src.Read(p)
 
 		// Because we're updating s's fields, we need to get the write lock.
-		s.writeLock(r)
+		s.cMu.Lock() // write lock
 		s.size += n
 		s.readErr = err
-		s.writeUnlock(r)
+		s.cMu.Unlock() // write unlock
 		return n, err
 	case offset > s.size:
 		// Should be impossible.
@@ -407,14 +402,14 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	n2, err = s.src.Read(p[n:])
 
 	// Because we're updating s's fields, we need to get write lock.
-	s.writeLock(r)
+	s.cMu.Lock() // write lock
 	s.size += n2
 	s.readErr = err
 	n += n2
 	if err != nil {
 		close(s.srcDoneCh)
 	}
-	s.writeUnlock(r)
+	s.cMu.Unlock() // write unlock
 	// Any subsequent reads will be direct from src.
 	r.readFn = s.readSrcDirect
 	return n, err
@@ -471,8 +466,8 @@ func (s *Stream) SourceDone() <-chan struct{} {
 //
 // See also: Stream.Total.
 func (s *Stream) Size() int {
-	s.cMu.RLock()
-	defer s.cMu.RUnlock()
+	s.cMu.RLock()         // read lock
+	defer s.cMu.RUnlock() // read unlock
 	return s.size
 }
 
@@ -509,8 +504,8 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 // error, it is never read from again. But typically the source reader
 // should still be explicitly closed, by closing all of this Stream's readers.
 func (s *Stream) Err() error {
-	s.cMu.RLock()
-	defer s.cMu.RUnlock()
+	s.cMu.RLock()         // read lock
+	defer s.cMu.RUnlock() // read unlock
 	return s.readErr
 }
 
@@ -518,8 +513,8 @@ func (s *Stream) Err() error {
 // returned by the underlying source reader, or -1. Thus, if Stream.Err
 // is non-nil, ErrAt will be >= 0 and equal to Stream.Size.
 func (s *Stream) ErrAt() int {
-	s.cMu.RLock()
-	defer s.cMu.RUnlock()
+	s.cMu.RLock()         // read lock
+	defer s.cMu.RUnlock() // read unlock
 	if s.readErr == nil {
 		return -1
 	}
@@ -531,8 +526,8 @@ func (s *Stream) ErrAt() int {
 // channel is closed, and the Stream is considered finished. Subsequent
 // invocations are no-op.
 func (s *Stream) Seal() {
-	s.cMu.Lock()
-	defer s.cMu.Unlock()
+	s.cMu.Lock()         // write lock
+	defer s.cMu.Unlock() // write unlock
 
 	if s.sealed {
 		return
@@ -546,8 +541,8 @@ func (s *Stream) Seal() {
 
 // Sealed returns true if Seal has been invoked.
 func (s *Stream) Sealed() bool {
-	s.cMu.RLock()
-	defer s.cMu.RUnlock()
+	s.cMu.RLock()         // read lock
+	defer s.cMu.RUnlock() // read unlock
 	return s.sealed
 }
 
@@ -555,8 +550,8 @@ func (s *Stream) Sealed() bool {
 // is sealed and r is the final unclosed reader, this method closes
 // the src reader, if it implements io.Closer.
 func (s *Stream) close(r *Reader) error {
-	s.cMu.Lock()
-	defer s.cMu.Unlock()
+	s.cMu.Lock()         // write lock
+	defer s.cMu.Unlock() // write unlock
 
 	s.rdrs = removeElement(s.rdrs, r)
 
@@ -604,7 +599,6 @@ type Reader struct {
 	// pCloseErr is set by Reader.Close, and the set value is
 	// returned by any subsequent calls to Close.
 	pCloseErr *error
-	Name      string // FIXME: delete when done with development
 
 	// offset is the offset into the stream from which the next
 	// call to Read will read. It is incremented by each Read.

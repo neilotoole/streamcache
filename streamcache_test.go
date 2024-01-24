@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -262,7 +261,6 @@ func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 	rdrs := make([]*streamcache.Reader, numG)
 	for i := 0; i < numG; i++ {
 		rdrs[i] = s.NewReader(ctx)
-		rdrs[i].Name = fmt.Sprintf("rdr-%d", i)
 	}
 
 	// This time, we'll seal in the middle of the reads.
