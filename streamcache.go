@@ -351,6 +351,8 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 
 	end := offset + len(p)
 	switch {
+	// This logic should be revisited. It might be possible that
+	// some of these cases are unreachable?
 	case end < s.size:
 		// The read can be satisfied entirely from the cache.
 		// Subsequent reads could also be satisfied by the
@@ -392,34 +394,14 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		// This read is an overlap of cache and src.
 	}
 
-	// This read requires combining bytes from cache with new
-	// bytes from src. First, copy the cache bytes.
+	// This read request is fully satisfied only by combining bytes from
+	// the cache with new bytes from src. However, we're not going to do that.
+	// We just return the cache bytes, and let the caller decide if they want
+	// to read more.
 	n, err = s.fillFromCache(p, offset)
 	// Now that we've got what we need from the cache,
 	// we can nil it out. It'll never be used again.
 	s.cache = nil
-	if err != nil {
-		return n, err
-	}
-
-	// REVISIT: ^^ Why not just return the cache bytes right away,
-	// instead of waiting to read the src bytes? Benchmark this.
-
-	// Next, read some more from src. We don't need to get src lock,
-	// because this is the final reader.
-	var n2 int
-	n2, err = s.src.Read(p[n:])
-
-	// Because we're updating s's fields, we need to get write lock.
-	s.cMu.Lock() // write lock
-	s.size += n2
-	s.readErr = err
-	n += n2
-	if err != nil {
-		// We received an error from src, so it's done.
-		close(s.srcDoneCh)
-	}
-	s.cMu.Unlock() // write unlock
 	// Any subsequent reads will be direct from src.
 	r.readFn = s.readSrcDirect
 	return n, err
@@ -431,7 +413,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 //	s.Seal()
 //	select {
 //	case <-s.Done():
-//	  fmt.Println("All readers are done")
+//	  fmt.Println("All readers are closed")
 //	  if err := s.Err(); err != nil {
 //	    fmt.Println("But an error occurred:", err)
 //	  }
@@ -444,7 +426,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 // unless Stream.Seal is invoked.
 //
 // Note that Stream.Err returning a non-nil value does not of itself indicate
-// that all readers are done. There could be other readers still consuming
+// that all readers are closed. There could be other readers still consuming
 // earlier parts of the cache.
 //
 // Note also that it's possible that even after the returned channel is closed,
