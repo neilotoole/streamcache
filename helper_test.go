@@ -148,26 +148,27 @@ func (rc *rcRecorder) Close() error {
 var _ io.Reader = (*tweakableReader)(nil)
 
 // tweakableReader is an io.Reader that can be configured
-// by test code. Each call to Read returns the reader's
-// fields. It is typical for test code to manipulate those
-// fields between calls to Read.
+// by test code. Each call to Read consults the reader's fields anew.
+// It is typical for test code to manipulate those fields between
+// calls to Read. Note that if the unblock channel field is non-nil,
+// it must be closed or have a value sent on it for Read to proceed.
 type tweakableReader struct {
-	err  error
-	data []byte
+	unblock chan struct{}
+	err     error
+	data    []byte
 }
 
-// Read implements io.Reader. It reads using the reader's fields.
+// Read implements io.Reader. Each call to Read consults the
+// reader's fields.
 func (r *tweakableReader) Read(p []byte) (n int, err error) {
+	if r.unblock != nil {
+		<-r.unblock
+	}
 	n = copy(p, r.data)
 	return n, r.err
 }
 
-func sleepJitter() {
-	const jitterFactor = 30
-	d := time.Millisecond * time.Duration(mrand.Intn(jitterFactor))
-	time.Sleep(d)
-}
-
+// requireNoTake fails if a value is taken from c.
 func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	t.Helper()
 	select {
@@ -177,6 +178,7 @@ func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	}
 }
 
+// requireTake fails if a value is not taken from c.
 func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 	t.Helper()
 	select {
@@ -217,17 +219,17 @@ func requireNoTotal(t *testing.T, s *streamcache.Stream) {
 }
 
 // requireTotal requires that s.Total doesn't block, and
-// returns want and no error.
+// that s.Total returns want and no error.
 func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	t.Helper()
 
-	ctx, cancel := context.WithCancelCause(context.Background())
-
 	var (
-		err  error
-		size int
-		wait = make(chan struct{})
+		ctx, cancel = context.WithCancelCause(context.Background())
+		err         error
+		size        int
+		wait        = make(chan struct{})
 	)
+
 	go func() {
 		time.AfterFunc(totalTimeout, func() {
 			cancel(errors.New("fail"))
@@ -265,4 +267,10 @@ func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
 	size = int(fi.Size())
 	t.Logf("Generated sample file [%d]: %s", size, fp)
 	return int(fi.Size()), fp
+}
+
+func sleepJitter() {
+	const jitterFactor = 30
+	d := time.Millisecond * time.Duration(mrand.Intn(jitterFactor))
+	time.Sleep(d)
 }

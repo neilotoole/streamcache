@@ -345,6 +345,10 @@ func TestSeal_AfterRead(t *testing.T) {
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, want, string(gotData2))
+
+	require.NotPanics(t, func() {
+		s.Seal()
+	}, "subsequent calls to s.Seal shouldn't panic")
 }
 
 func TestSeal_NoReaders(t *testing.T) {
@@ -526,4 +530,61 @@ func TestEmptyStream_NoEOF(t *testing.T) {
 	requireNoTake(t, s.Done())
 	require.Equal(t, 0, s.Size())
 	requireTotal(t, s, 0)
+}
+
+// TestContextCancelBeforeSrcRead tests the scenario where
+// Reader r2 is blocked due to r1 having the src lock,
+// and then r2's context is canceled before the lock is released.
+// On lock release, r2 proceeds and acquires the src lock, but
+// instead of reading from src, r2 should return the cancellation
+// cause before even attempting to read from the source.
+func TestContextCancelBeforeSrcRead(t *testing.T) {
+	t.Parallel()
+	sleep := time.Millisecond * 100
+
+	src := &tweakableReader{unblock: make(chan struct{}, 1), data: []byte(anything)}
+	s := streamcache.New(src)
+
+	r1 := s.NewReader(context.Background())
+	// buf1 is zero length, because we don't actually
+	// want to fill up the cache when r1 reads.
+	buf1 := make([]byte, 0)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// r1 will block until it receives from src.unblock.
+		n, err := r1.Read(buf1)
+		require.NoError(t, err)
+		require.Equal(t, 0, n)
+	}()
+
+	time.Sleep(sleep)
+
+	wantErr := errors.New("doh")
+	ctx, cancelFn := context.WithCancelCause(context.Background())
+	r2 := s.NewReader(ctx)
+	buf2 := make([]byte, 10)
+	go func() {
+		defer wg.Done()
+		// r2 will block on acquiring the src lock, until r1
+		// releases it. But before r1 releases it, r2's context
+		// will be cancelled, and thus wantErr should be returned.
+		n, err := r2.Read(buf2)
+		assert.Equal(t, 0, n)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, wantErr))
+	}()
+
+	time.Sleep(sleep)
+	// r1 is blocked on src.unblock, and r2 is blocked on src lock.
+	// Cancel r2's context.
+	cancelFn(wantErr)
+	time.Sleep(sleep)
+	// Now, unblock r1, and r2 should then acquire the src lock,
+	// but then r2 should consult its context, and return the
+	// cancellation cause.
+	src.unblock <- struct{}{}
+	wg.Wait()
 }
