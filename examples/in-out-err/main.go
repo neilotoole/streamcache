@@ -19,35 +19,33 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/neilotoole/streamcache"
 )
 
 // Write stdin to both stdout and stderr.
+// Some error handling omitted for brevity.
 func main() {
 	ctx := context.Background()
 	stream := streamcache.New(os.Stdin)
 
 	r1 := stream.NewReader(ctx)
-	r2 := stream.NewReader(ctx)
-
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
 	go func() {
-		defer wg.Done()
+		defer r1.Close()
 		io.Copy(os.Stdout, r1)
-		r1.Close()
 	}()
-	go func() {
-		defer wg.Done()
-		io.Copy(os.Stderr, r2)
-		r2.Close()
-	}()
-	wg.Wait()
 
-	if stream.Err() != nil && !errors.Is(stream.Err(), io.EOF) {
-		fmt.Fprintln(os.Stderr, "error:", stream.Err())
+	r2 := stream.NewReader(ctx)
+	go func() {
+		defer r2.Close()
+		io.Copy(os.Stderr, r2)
+	}()
+
+	stream.Seal()          // Indicate that there'll be no more readers...
+	<-stream.ReadersDone() // Receives when all readers are done.
+
+	if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 
