@@ -21,7 +21,7 @@ import (
 	"github.com/neilotoole/streamcache"
 )
 
-// main sets up the CLI, and calls exec to do the actual work.
+// main sets up the CLI, and invokes exec to do the actual work.
 func main() {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	var err error
