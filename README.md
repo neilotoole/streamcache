@@ -112,6 +112,6 @@ Read 12 bytes from stdin
   of the contents.
 - [`multicase`](./examples/multicase): transform each line of input to upper, lower, and title case.
 
-## Related / Similar Projects
+## Related work
 
 - [`djherbis/fscache`](https://github.com/djherbis/fscache)
