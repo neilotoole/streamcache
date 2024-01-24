@@ -43,8 +43,8 @@ func main() {
 		io.Copy(os.Stderr, r2)
 	}()
 
-	stream.Seal()          // Indicate that there'll be no more readers...
-	<-stream.ReadersDone() // Receives when all readers are done.
+	stream.Seal()   // Indicate that there'll be no more readers...
+	<-stream.Done() // Receives when all readers are closed.
 
 	if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(os.Stderr, "error:", err)

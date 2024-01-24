@@ -30,16 +30,16 @@ func TestStream(t *testing.T) {
 	ctx := context.Background()
 
 	s := streamcache.New(strings.NewReader(anything))
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	require.Equal(t, 0, s.Size())
 	require.Nil(t, s.Err())
 	require.Equal(t, -1, s.ErrAt())
 	requireNoTotal(t, s)
 
 	r := s.NewReader(ctx)
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	requireNoTotal(t, s)
 
 	// We'll read half the bytes.
@@ -51,15 +51,15 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 4, streamcache.ReaderOffset(r))
 	require.Equal(t, 4, s.Size())
 	require.Equal(t, 4, len(streamcache.CacheInternal(s)))
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	requireNoTotal(t, s)
 
 	// Seal the source; after this, no more readers can be created.
 	s.Seal()
 	require.True(t, s.Sealed())
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	requireNoTotal(t, s)
 
 	require.Panics(t, func() {
@@ -70,8 +70,8 @@ func TestStream(t *testing.T) {
 	gotN, gotErr = r.Read(buf)
 	require.NoError(t, gotErr)
 	require.Nil(t, s.Err())
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	requireNoTotal(t, s)
 	require.Equal(t, 4, gotN)
 	require.Equal(t, "hing", string(buf))
@@ -85,8 +85,8 @@ func TestStream(t *testing.T) {
 	require.Equal(t, io.EOF, gotErr)
 	require.Equal(t, io.EOF, s.Err())
 	requireTotal(t, s, 8)
-	requireTake(t, s.SourceDone())
-	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
@@ -101,22 +101,22 @@ func TestStream(t *testing.T) {
 	require.Equal(t, 8, s.Size())
 	require.Equal(t, 8, s.ErrAt())
 	requireTotal(t, s, 8)
-	requireNoTake(t, s.ReadersDone())
-	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireTake(t, s.Filled())
 
 	// Close the reader, which should close the underlying source.
 	gotErr = r.Close()
 	require.NoError(t, gotErr)
 	requireTotal(t, s, 8)
-	requireTake(t, s.ReadersDone())
-	requireTake(t, s.SourceDone())
+	requireTake(t, s.Done())
+	requireTake(t, s.Filled())
 
 	// Closing again should be no-op.
 	gotErr = r.Close()
 	require.Nil(t, gotErr)
 	requireTotal(t, s, 8)
-	requireTake(t, s.ReadersDone())
-	requireTake(t, s.SourceDone())
+	requireTake(t, s.Done())
+	requireTake(t, s.Filled())
 }
 
 func TestReaderAlreadyClosed(t *testing.T) {
@@ -132,8 +132,8 @@ func TestReaderAlreadyClosed(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, streamcache.ErrAlreadyClosed, err)
 	requireNoTotal(t, s)
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 	requireNoTotal(t, s)
 }
 
@@ -149,9 +149,9 @@ func TestSingleReaderImmediateSeal(t *testing.T) {
 	require.NoError(t, err)
 	requireTotal(t, s, len(anything))
 	require.Equal(t, anything, string(gotData))
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 	require.NoError(t, r.Close())
-	requireTake(t, s.ReadersDone())
+	requireTake(t, s.Done())
 }
 
 func TestReader_NoSeal(t *testing.T) {
@@ -163,8 +163,8 @@ func TestReader_NoSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, anything, string(gotData))
 	require.NoError(t, r.Close())
-	requireNoTake(t, s.ReadersDone(), "not done because not sealed")
-	requireTake(t, s.SourceDone())
+	requireNoTake(t, s.Done(), "not done because not sealed")
+	requireTake(t, s.Filled())
 	require.Equal(t, io.EOF, s.Err())
 	requireTotal(t, s, len(anything))
 }
@@ -188,8 +188,8 @@ func TestStream_File(t *testing.T) {
 	gotData, err := io.ReadAll(r)
 	require.NoError(t, err)
 	requireTotal(t, s, wantSize)
-	requireTake(t, s.SourceDone())
-	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
 	require.Equal(t, wantSize, s.Size())
 	require.True(t, errors.Is(s.Err(), io.EOF))
 
@@ -198,8 +198,8 @@ func TestStream_File(t *testing.T) {
 	assert.NoError(t, r.Close())
 	assert.Equal(t, 1, recorder.closeCount)
 	require.Equal(t, wantSize, s.Size())
-	requireTake(t, s.SourceDone())
-	requireTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireTake(t, s.Done())
 	requireTotal(t, s, wantSize)
 }
 
@@ -226,16 +226,16 @@ func TestStream_File_Concurrent_SealLate(t *testing.T) {
 			gotData, err := io.ReadAll(r)
 			assert.NoError(t, err)
 			assert.Equal(t, string(wantData), string(gotData))
-			requireTake(t, s.SourceDone())
+			requireTake(t, s.Filled())
 			requireTotal(t, s, wantSize)
 		}(r)
 	}
 
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 
 	s.Seal()
 
-	<-s.ReadersDone()
+	<-s.Done()
 
 	require.Equal(t, wantSize, s.Size())
 	requireTotal(t, s, wantSize)
@@ -285,19 +285,19 @@ func TestStream_File_Concurrent_SealMiddle(t *testing.T) {
 			gotData, gotErr := io.ReadAll(r)
 			require.NoError(t, gotErr)
 			requireTotal(t, s, wantSize)
-			requireTake(t, s.SourceDone())
+			requireTake(t, s.Filled())
 
 			assert.Equal(t, string(wantData), string(gotData))
 		}(i, rdrs[i])
 	}
 
-	t.Logf("Waiting on <-s.ReadersDone()")
-	<-s.ReadersDone()
+	t.Logf("Waiting on <-s.Done()")
+	<-s.Done()
 
 	assert.NoError(t, err)
 	require.Equal(t, wantSize, s.Size())
 	requireTotal(t, s, wantSize)
-	requireTake(t, s.SourceDone())
+	requireTake(t, s.Filled())
 }
 
 func TestSeal_AlreadySealed(t *testing.T) {
@@ -314,8 +314,8 @@ func TestSeal_AlreadySealed(t *testing.T) {
 	}, "should panic because stream is already sealed")
 
 	requireNoTotal(t, s)
-	requireNoTake(t, s.ReadersDone())
-	requireNoTake(t, s.SourceDone())
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
 }
 
 func TestSeal_AfterRead(t *testing.T) {
@@ -330,8 +330,8 @@ func TestSeal_AfterRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, string(gotData1))
 	requireTotal(t, s, len(want))
-	requireTake(t, s.SourceDone())
-	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
 
 	r2 := s.NewReader(ctx)
 	require.NoError(t, err)
@@ -339,8 +339,8 @@ func TestSeal_AfterRead(t *testing.T) {
 	s.Seal()
 
 	requireTotal(t, s, len(want))
-	requireTake(t, s.SourceDone())
-	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
 
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
@@ -414,28 +414,28 @@ func TestClose(t *testing.T) {
 	recorder := &rcRecorder{r: strings.NewReader(anything)}
 	s := streamcache.New(recorder)
 
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 	r1 := s.NewReader(ctx)
 
 	gotData1, err := io.ReadAll(r1)
 	require.NoError(t, err)
 	require.Equal(t, wantData, gotData1)
-	requireTake(t, s.SourceDone())
-	requireNoTake(t, s.ReadersDone())
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
 	require.NoError(t, r1.Close())
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 	require.Equal(t, 0, recorder.closeCount)
 
 	r2 := s.NewReader(ctx)
 	s.Seal()
 
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 	gotData2, err := io.ReadAll(r2)
 	require.NoError(t, err)
 	require.Equal(t, wantData, gotData2)
-	requireNoTake(t, s.ReadersDone())
+	requireNoTake(t, s.Done())
 	require.NoError(t, r2.Close())
-	requireTake(t, s.ReadersDone())
+	requireTake(t, s.Done())
 	require.Equal(t, 1, recorder.closeCount)
 }
 

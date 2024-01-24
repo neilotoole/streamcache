@@ -64,11 +64,11 @@ type Stream struct {
 	readErr error
 
 	// rdrsDoneCh is closed after the Stream is sealed and the last
-	// reader is closed. See Stream.ReadersDone.
+	// reader is closed. See Stream.Done.
 	rdrsDoneCh chan struct{}
 
 	// srcDoneCh is closed when the underlying source reader
-	// returns an error, including io.EOF. See Stream.EOF.
+	// returns an error, including io.EOF. See Stream.Filled.
 	srcDoneCh chan struct{}
 
 	// rdrs is the set of unclosed Reader instances created
@@ -415,11 +415,11 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	return n, err
 }
 
-// ReadersDone returns a channel that is closed when the Stream is
+// Done returns a channel that is closed when the Stream is
 // sealed and all remaining readers are closed.
 //
 //	select {
-//	case <-s.ReadersDone():
+//	case <-s.Done():
 //	  fmt.Println("All readers are done")
 //	  if err := s.Err(); err != nil {
 //	    fmt.Println("But an error occurred:", err)
@@ -431,33 +431,33 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 // The returned channel is closed after Seal has been invoked on it, and there
 // are zero unclosed Reader instances remaining.
 //
-// IMPORTANT: Don't wait on the ReadersDone channel without also calling Stream.Seal,
+// IMPORTANT: Don't wait on the Done channel without also calling Stream.Seal,
 // as you may well end up in deadlock. The returned channel will never be closed
 // unless Stream.Seal is invoked.
 //
-// Note that Stream.Err returning a
-// non-nil value does not of itself indicate that the readers are done. There
-// could be other readers still consuming earlier parts of the cache.
+// Note that Stream.Err returning a non-nil value does not of itself indicate
+// that the readers are done. There could be other readers still consuming
+// earlier parts of the cache.
 //
 // Note also that it's possible that even after the returned channel is closed,
 // Stream may not have closed its underlying source reader. For example, if a
-// Stream is created and immediately sealed, the channel returned by ReadersDone
+// Stream is created and immediately sealed, the channel returned by Done
 // is closed, although the underlying source reader was never closed.
 // The source reader is closed only by closing the final Reader instance
 // that was active after Seal is invoked.
 //
-// See also: Stream.SourceDone.
-func (s *Stream) ReadersDone() <-chan struct{} {
+// See also: Stream.Filled.
+func (s *Stream) Done() <-chan struct{} {
 	return s.rdrsDoneCh
 }
 
-// SourceDone returns a channel that is closed when the underlying source
+// Filled returns a channel that is closed when the underlying source
 // reader returns an error, including io.EOF. If the source reader returns
 // an error, it is never read from again. If the source reader does not
 // return an error, this channel is never closed.
 //
-// See also: Stream.ReadersDone.
-func (s *Stream) SourceDone() <-chan struct{} {
+// See also: Stream.Done.
+func (s *Stream) Filled() <-chan struct{} {
 	return s.srcDoneCh
 }
 
@@ -477,12 +477,12 @@ func (s *Stream) Size() int {
 // error are returned. If source returned a non-EOF error, that error and
 // the total number of bytes read are returned.
 //
-// Note that Total only returns if the channel returned by Stream.SourceDone
-// is closed, but Total can return even if Stream.ReadersDone is not closed.
+// Note that Total only returns if the channel returned by Stream.Filled
+// is closed, but Total can return even if Stream.Done is not closed.
 // That is to say, Total returning does not necessarily mean that all readers
 // are closed.
 //
-// See also: Stream.Size, Stream.Err, Stream.SourceDone, Stream.ReadersDone.
+// See also: Stream.Size, Stream.Err, Stream.Filled, Stream.Done.
 func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	select {
 	case <-ctx.Done():
@@ -522,7 +522,7 @@ func (s *Stream) ErrAt() int {
 }
 
 // Seal is called to indicate that no more calls to NewReader are permitted.
-// If there are no unclosed readers when Seal is invoked, the Stream.ReadersDone
+// If there are no unclosed readers when Seal is invoked, the Stream.Done
 // channel is closed, and the Stream is considered finished. Subsequent
 // invocations are no-op.
 func (s *Stream) Seal() {
@@ -657,7 +657,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 // Close closes this Reader. If the parent Stream is not sealed, this method
 // ultimately returns nil. If the parent Stream is sealed and this is the last
 // remaining reader, the Stream's source reader is closed, if it implements
-// io.Closer. At that point, and the channel returned by Stream.ReadersDone
+// io.Closer. At that point, and the channel returned by Stream.Done
 // is closed.
 //
 // If you don't want the source to be closed, wrap it via io.NopCloser before
