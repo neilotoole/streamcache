@@ -483,3 +483,47 @@ func TestReader_Read_PartialCacheHit(t *testing.T) {
 	require.Equal(t, len(anything), n3)
 	require.True(t, errors.Is(err, io.ErrUnexpectedEOF))
 }
+
+func TestEmptyStream_EOF(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	s := streamcache.New(strings.NewReader(""))
+
+	r := s.NewReader(ctx)
+	gotData, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, "", string(gotData))
+	requireNoTake(t, s.Done())
+	requireTake(t, s.Filled())
+	require.Equal(t, 0, s.Size())
+	requireTotal(t, s, 0)
+	require.Equal(t, io.EOF, s.Err())
+}
+
+func TestEmptyStream_NoEOF(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	src := &tweakableReader{}
+	s := streamcache.New(src)
+
+	r := s.NewReader(ctx)
+	buf := make([]byte, 10)
+	gotN, gotErr := r.Read(buf)
+	require.NoError(t, gotErr)
+	require.Equal(t, 0, gotN)
+	requireNoTake(t, s.Done())
+	requireNoTake(t, s.Filled())
+	require.Equal(t, 0, s.Size())
+	requireNoTotal(t, s)
+
+	src.err = io.EOF
+	gotN, gotErr = r.Read(buf)
+	require.Equal(t, 0, gotN)
+	require.True(t, errors.Is(gotErr, io.EOF))
+	requireTake(t, s.Filled())
+	requireNoTake(t, s.Done())
+	require.Equal(t, 0, s.Size())
+	requireTotal(t, s, 0)
+}

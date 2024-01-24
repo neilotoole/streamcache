@@ -145,6 +145,23 @@ func (rc *rcRecorder) Close() error {
 	return nil
 }
 
+var _ io.Reader = (*tweakableReader)(nil)
+
+// tweakableReader is an io.Reader that can be configured
+// by test code. Each call to Read returns the reader's
+// fields. It is typical for test code to manipulate those
+// fields between calls to Read.
+type tweakableReader struct {
+	err  error
+	data []byte
+}
+
+// Read implements io.Reader. It reads using the reader's fields.
+func (r *tweakableReader) Read(p []byte) (n int, err error) {
+	n = copy(p, r.data)
+	return n, r.err
+}
+
 func sleepJitter() {
 	const jitterFactor = 30
 	d := time.Millisecond * time.Duration(mrand.Intn(jitterFactor))
@@ -248,9 +265,4 @@ func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
 	size = int(fi.Size())
 	t.Logf("Generated sample file [%d]: %s", size, fp)
 	return int(fi.Size()), fp
-}
-
-// FIXME: delete enableLogging.
-func enableLogging(t *testing.T) { //nolint:unused
-	t.Setenv("STREAMCACHE_LOG", "true")
 }
