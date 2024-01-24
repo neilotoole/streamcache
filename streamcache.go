@@ -173,6 +173,7 @@ func (s *Stream) readSrcDirect(_ *Reader, p []byte, _ int) (n int, err error) {
 	s.size += n
 	s.readErr = err
 	if err != nil {
+		// We received an error from src, so it's done.
 		close(s.srcDoneCh)
 	}
 
@@ -247,7 +248,7 @@ TOP:
 		// And now we acquire the src lock so that we
 		// can read from src.
 		s.srcMu.Lock() // src lock
-		// REVISIT: ^^ why not s.srcMu.LockContext(ctx) ??
+		// REVISIT: ^^ why not s.srcMu.LockContext(ctx) ?? Benchmark this.
 	}
 
 	// If we've gotten this far, we have the src lock, but not the
@@ -298,14 +299,15 @@ TOP:
 	}
 
 	if err != nil {
+		// We received an error from src, so it's done.
 		close(s.srcDoneCh)
 	}
 
 	// We're done updating the cache, so we can release the write and src
 	// locks, and return.
-	s.cMu.Unlock()   // write unlock
-	s.srcMu.Unlock() // src unlock
-	runtime.Gosched()
+	s.cMu.Unlock()    // write unlock
+	s.srcMu.Unlock()  // src unlock
+	runtime.Gosched() // REVISIT: benchmark this
 	return n, err
 }
 
@@ -377,6 +379,10 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		s.cMu.Lock() // write lock
 		s.size += n
 		s.readErr = err
+		if err != nil {
+			// We received an error from src, so it's done.
+			close(s.srcDoneCh)
+		}
 		s.cMu.Unlock() // write unlock
 		return n, err
 	case offset > s.size:
@@ -396,6 +402,9 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 		return n, err
 	}
 
+	// REVISIT: ^^ Why not just return the cache bytes right away,
+	// instead of waiting to read the src bytes? Benchmark this.
+
 	// Next, read some more from src. We don't need to get src lock,
 	// because this is the final reader.
 	var n2 int
@@ -407,6 +416,7 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 	s.readErr = err
 	n += n2
 	if err != nil {
+		// We received an error from src, so it's done.
 		close(s.srcDoneCh)
 	}
 	s.cMu.Unlock() // write unlock
@@ -429,20 +439,17 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 //	  fmt.Println("The stream still is being read from")
 //	}
 //
-// The returned channel is closed after Seal has been invoked on it, and there
-// are zero unclosed Reader instances remaining.
-//
 // IMPORTANT: Don't wait on the Done channel without also calling Stream.Seal,
-// as you may well end up in deadlock. The returned channel will never be closed
+// as you may end up in deadlock. The returned channel will never be closed
 // unless Stream.Seal is invoked.
 //
 // Note that Stream.Err returning a non-nil value does not of itself indicate
-// that the readers are done. There could be other readers still consuming
+// that all readers are done. There could be other readers still consuming
 // earlier parts of the cache.
 //
 // Note also that it's possible that even after the returned channel is closed,
-// Stream may not have closed its underlying source reader. For example, if a
-// Stream is created and immediately sealed, the channel returned by Done
+// Stream may not have closed its underlying source reader. For example, if
+// a Stream is created and immediately sealed, the channel returned by Done
 // is closed, although the underlying source reader was never closed.
 // The source reader is closed only by closing the final Reader instance
 // that was active after Seal is invoked.
@@ -475,8 +482,8 @@ func (s *Stream) Size() int {
 // Total blocks until the source reader is fully read, and returns the total
 // number of bytes read from the source, and any read error other than io.EOF
 // returned by the source. If ctx is cancelled, zero and the context's cause
-// error are returned. If source returned a non-EOF error, that error and
-// the total number of bytes read are returned.
+// error (per context.Cause) are returned. If source returned a non-EOF error,
+// that error and the total number of bytes read are returned.
 //
 // Note that Total only returns if the channel returned by Stream.Filled
 // is closed, but Total can return even if Stream.Done is not closed.
@@ -485,6 +492,10 @@ func (s *Stream) Size() int {
 //
 // See also: Stream.Size, Stream.Err, Stream.Filled, Stream.Done.
 func (s *Stream) Total(ctx context.Context) (size int, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	select {
 	case <-ctx.Done():
 		return 0, context.Cause(ctx)
@@ -502,8 +513,8 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 
 // Err returns the first error (if any) that was returned by the underlying
 // source reader, which may be io.EOF. After the source reader returns an
-// error, it is never read from again. But typically the source reader
-// should still be explicitly closed, by closing all of this Stream's readers.
+// error, it is never read from again, and the channel returned by Stream.Filled
+// is closed.
 func (s *Stream) Err() error {
 	s.cMu.RLock()         // read lock
 	defer s.cMu.RUnlock() // read unlock
@@ -512,7 +523,8 @@ func (s *Stream) Err() error {
 
 // ErrAt returns the byte offset at which the first error (if any) was
 // returned by the underlying source reader, or -1. Thus, if Stream.Err
-// is non-nil, ErrAt will be >= 0 and equal to Stream.Size.
+// is non-nil, ErrAt will be >= 0 and equal to Stream.Size, and the channel
+// returned by Stream.Filled will be closed.
 func (s *Stream) ErrAt() int {
 	s.cMu.RLock()         // read lock
 	defer s.cMu.RUnlock() // read unlock
@@ -579,7 +591,8 @@ var _ io.ReadCloser = (*Reader)(nil)
 type Reader struct {
 	// ctx is the context provided to Stream.NewReader. If non-nil,
 	// every invocation of Reader.Read checks ctx for cancellation
-	// before proceeding. Note that Reader.Close ignores ctx.
+	// before proceeding (and possibly later at other checkpoints).
+	// Note that Reader.Close ignores ctx.
 	ctx context.Context
 
 	// readErr is set by Reader.Read when an error is returned
