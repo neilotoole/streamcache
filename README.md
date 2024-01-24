@@ -56,42 +56,42 @@ of `stdin` to `stdout` and `stderr`, and prints the number of bytes read.
 package main
 
 import (
-  "context"
-  "errors"
-  "fmt"
-  "io"
-  "os"
+    "context"
+    "errors"
+    "fmt"
+    "io"
+    "os"
 
-  "github.com/neilotoole/streamcache"
+    "github.com/neilotoole/streamcache"
 )
 
 // Write stdin to both stdout and stderr.
 // Some error handling omitted for brevity.
 func main() {
-  ctx := context.Background()
-  stream := streamcache.New(os.Stdin)
+    ctx := context.Background()
+    stream := streamcache.New(os.Stdin)
 
-  r1 := stream.NewReader(ctx)
-  go func() {
-    defer r1.Close()
-    io.Copy(os.Stdout, r1)
-  }()
+    r1 := stream.NewReader(ctx)
+    go func() {
+        defer r1.Close()
+        io.Copy(os.Stdout, r1)
+    }()
 
-  r2 := stream.NewReader(ctx)
-  go func() {
-    defer r2.Close()
-    io.Copy(os.Stderr, r2)
-  }()
-  
-  stream.Seal()   // Indicate that there'll be no more readers...
-  <-stream.Done() // Receives when all readers are closed.
+    r2 := stream.NewReader(ctx)
+    go func() {
+        defer r2.Close()
+        io.Copy(os.Stderr, r2)
+    }()
+    
+    stream.Seal()     // Indicate that there'll be no more readers...
+    <-stream.Done() // Receives when all readers are closed.
 
-  if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
-    fmt.Fprintln(os.Stderr, "error:", err)
-    os.Exit(1)
-  }
+    if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
+        fmt.Fprintln(os.Stderr, "error:", err)
+        os.Exit(1)
+    }
 
-  fmt.Fprintf(os.Stdout, "Read %d bytes from stdin\n", stream.Size())
+    fmt.Fprintf(os.Stdout, "Read %d bytes from stdin\n", stream.Size())
 }
 ```
 
