@@ -600,8 +600,8 @@ type Reader struct {
 	// call to Read will read. It is incremented by each Read.
 	offset int
 
-	// mu guards Reader's methods.
-	mu sync.Mutex
+	// closeOnce guards Reader's Close method.
+	closeOnce sync.Once
 }
 
 // Read reads from the stream. If a non-nil context was provided to Stream.NewReader
@@ -624,8 +624,8 @@ type Reader struct {
 //
 // Use io.ReadFull or io.ReadAtLeast if you want to ensure that p is filled.
 func (r *Reader) Read(p []byte) (n int, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// r.mu.Lock()
+	// defer r.mu.Unlock()
 
 	if r.ctx != nil {
 		select {
@@ -665,8 +665,10 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 // Note that subsequent calls to Close are no-op and return the same result
 // as the first call.
 func (r *Reader) Close() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.closeOnce.Do(func() {
+		closeErr := r.s.close(r)
+		r.pCloseErr = &closeErr
+	})
 
 	if r.pCloseErr != nil {
 		// Already closed. Return the same error as the first call
@@ -674,9 +676,7 @@ func (r *Reader) Close() error {
 		return *r.pCloseErr
 	}
 
-	closeErr := r.s.close(r)
-	r.pCloseErr = &closeErr
-	return closeErr
+	return nil
 }
 
 // removeElement returns a (possibly new) slice that contains the

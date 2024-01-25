@@ -169,22 +169,22 @@ func (r *tweakableReader) Read(p []byte) (n int, err error) {
 }
 
 // requireNoTake fails if a value is taken from c.
-func requireNoTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
-	t.Helper()
+func requireNoTake[C any](tb testing.TB, c <-chan C, msgAndArgs ...any) {
+	tb.Helper()
 	select {
 	case <-c:
-		require.Fail(t, "unexpected take from channel", msgAndArgs...)
+		require.Fail(tb, "unexpected take from channel", msgAndArgs...)
 	default:
 	}
 }
 
 // requireTake fails if a value is not taken from c.
-func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
-	t.Helper()
+func requireTake[C any](tb testing.TB, c <-chan C, msgAndArgs ...any) {
+	tb.Helper()
 	select {
 	case <-c:
 	default:
-		require.Fail(t, "unexpected failure to take from channel", msgAndArgs...)
+		require.Fail(tb, "unexpected failure to take from channel", msgAndArgs...)
 	}
 }
 
@@ -192,8 +192,8 @@ func requireTake[C any](t *testing.T, c <-chan C, msgAndArgs ...any) {
 const totalTimeout = time.Millisecond * 100
 
 // requireNoTotal requires that s.Total blocks.
-func requireNoTotal(t *testing.T, s *streamcache.Stream) {
-	t.Helper()
+func requireNoTotal(tb testing.TB, s *streamcache.Stream) {
+	tb.Helper()
 
 	failErr := errors.New("fail")
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -213,15 +213,15 @@ func requireNoTotal(t *testing.T, s *streamcache.Stream) {
 	}()
 
 	<-wait
-	require.Error(t, err)
-	require.True(t, errors.Is(err, failErr))
-	require.Equal(t, 0, size)
+	require.Error(tb, err)
+	require.True(tb, errors.Is(err, failErr))
+	require.Equal(tb, 0, size)
 }
 
 // requireTotal requires that s.Total doesn't block, and
 // that s.Total returns want and no error.
-func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
-	t.Helper()
+func requireTotal(tb testing.TB, s *streamcache.Stream, want int) {
+	tb.Helper()
 
 	var (
 		ctx, cancel = context.WithCancelCause(context.Background())
@@ -239,16 +239,16 @@ func requireTotal(t *testing.T, s *streamcache.Stream, want int) {
 	}()
 
 	<-wait
-	require.NoError(t, err)
-	require.Equal(t, want, size)
+	require.NoError(tb, err)
+	require.Equal(tb, want, size)
 }
 
 // generateSampleFile generates a temp file of sample data with the
 // specified number of rows. It is the caller's responsibility to
 // close the file. Note that the file is removed by t.Cleanup.
-func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
+func generateSampleFile(tb testing.TB, rows int) (size int, fp string) {
 	f, err := os.CreateTemp("", "")
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	fp = f.Name()
 
 	const line = "A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z"
@@ -258,14 +258,14 @@ func generateSampleFile(t *testing.T, rows int) (size int, fp string) {
 		//  1,A,B,C...
 		s := strconv.Itoa(i) + "," + line
 		_, err = fmt.Fprintln(f, s)
-		require.NoError(t, err)
+		require.NoError(tb, err)
 	}
 
-	require.NoError(t, f.Close())
+	require.NoError(tb, f.Close())
 	fi, err := os.Stat(fp)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	size = int(fi.Size())
-	t.Logf("Generated sample file [%d]: %s", size, fp)
+	tb.Logf("Generated sample file [%d]: %s", size, fp)
 	return int(fi.Size()), fp
 }
 
