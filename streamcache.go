@@ -623,10 +623,9 @@ type Reader struct {
 //	returns what is available instead of waiting for more.
 //
 // Use io.ReadFull or io.ReadAtLeast if you want to ensure that p is filled.
+//
+// Read is not safe for concurrent use.
 func (r *Reader) Read(p []byte) (n int, err error) {
-	// r.mu.Lock()
-	// defer r.mu.Unlock()
-
 	if r.ctx != nil {
 		select {
 		case <-r.ctx.Done():
@@ -644,9 +643,9 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	}
 
 	n, err = r.readFn(r, p, r.offset)
-
 	r.readErr = err
 	r.offset += n
+
 	return n, err
 }
 
