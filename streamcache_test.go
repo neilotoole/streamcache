@@ -34,7 +34,6 @@ func TestStream(t *testing.T) {
 	requireNoTake(t, s.Filled())
 	require.Equal(t, 0, s.Size())
 	require.Nil(t, s.Err())
-	require.Equal(t, -1, s.ErrAt())
 	requireNoTotal(t, s)
 
 	r := s.NewReader(ctx)
@@ -89,7 +88,6 @@ func TestStream(t *testing.T) {
 	requireNoTake(t, s.Done())
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
-	require.Equal(t, 8, s.ErrAt())
 
 	// Read one more time, and we should get io.EOF again.
 	gotN, gotErr = r.Read(buf)
@@ -99,7 +97,6 @@ func TestStream(t *testing.T) {
 	require.Equal(t, io.EOF, s.Err())
 	require.Equal(t, 8, streamcache.ReaderOffset(r))
 	require.Equal(t, 8, s.Size())
-	require.Equal(t, 8, s.ErrAt())
 	requireTotal(t, s, 8)
 	requireNoTake(t, s.Done())
 	requireTake(t, s.Filled())
