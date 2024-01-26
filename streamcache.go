@@ -152,6 +152,18 @@ func (s *Stream) NewReader(ctx context.Context) *Reader {
 	return r
 }
 
+// Source returns the Stream's underlying source io.Reader.
+// This can be useful if you need to force close the source
+// for some reason, e.g.
+//
+//	stream.Source().(io.Closer).Close()
+//
+// The Stream's behavior is undefined if the caller reads from
+// the source directly.
+func (s *Stream) Source() io.Reader {
+	return s.src
+}
+
 // readFunc is the type of the Reader.readFn field.
 type readFunc func(r *Reader, p []byte, offset int) (n int, err error)
 

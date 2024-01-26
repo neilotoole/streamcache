@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -584,4 +585,59 @@ func TestContextCancelBeforeSrcRead(t *testing.T) {
 	// cancellation cause.
 	src.unblock <- struct{}{}
 	wg.Wait()
+}
+
+func TestStreamSource(t *testing.T) {
+	t.Parallel()
+
+	// Write some data to a test file.
+	fp := filepath.Join(t.TempDir(), "streamcache_test.txt")
+	require.NoError(t, os.WriteFile(fp, []byte(anything), 0o600))
+
+	f, fErr := os.Open(fp)
+	require.NoError(t, fErr)
+
+	// Create a stream (and reader) that reads from the file.
+	stream := streamcache.New(f)
+	r := stream.NewReader(context.Background())
+
+	// Read a small chunk from the file.
+	buf := make([]byte, 2)
+	n, readErr := r.Read(buf)
+	require.NoError(t, readErr)
+	require.Equal(t, 2, n)
+
+	gotSrc := stream.Source()
+	require.Equal(t, f, gotSrc)
+
+	// Close the source (i.e. the file), and then try
+	// to read from the reader.
+	require.NoError(t, gotSrc.(io.ReadCloser).Close())
+
+	n, readErr = r.Read(buf)
+	require.Error(t, readErr)
+	require.Equal(t, 0, n)
+	readPathErr := new(os.PathError)
+	require.True(t, errors.As(readErr, &readPathErr))
+	require.Equal(t, "read", readPathErr.Op)
+	require.Equal(t, "file already closed", readPathErr.Err.Error())
+	require.Equal(t, 2, stream.Size())
+	require.Equal(t, readErr, stream.Err())
+	total, totalErr := stream.Total(context.Background())
+	require.Error(t, totalErr)
+	require.Equal(t, 2, total)
+	require.True(t, errors.Is(totalErr, readErr))
+	requireTake(t, stream.Filled())
+
+	// Now check what happens when we close the reader.
+	requireNoTake(t, stream.Done(),
+		"stream is not done until sealed and reader is closed")
+	stream.Seal()
+	closeErr := r.Close()
+	require.Error(t, closeErr)
+	closePathErr := new(os.PathError)
+	require.True(t, errors.As(closeErr, &closePathErr))
+	require.Equal(t, "close", closePathErr.Op)
+	require.Equal(t, "file already closed", closePathErr.Err.Error())
+	requireTake(t, stream.Done())
 }
