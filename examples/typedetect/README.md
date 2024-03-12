@@ -16,3 +16,4 @@ $ typedetect testdata/data.json
 $ cat testdata/data.xml | typedetect
 ```
 
+![streamcache_typedetect.png](streamcache_typedetect.png)

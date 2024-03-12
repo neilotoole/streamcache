@@ -12,3 +12,4 @@ $ go install github.com/neilotoole/streamcache/examples/multicase
 $ echo "hello world" | multicase
 ```
 
+![streamcache_multicase.png](streamcache_multicase.png)

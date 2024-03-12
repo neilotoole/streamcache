@@ -11,9 +11,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/neilotoole/streamcache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/neilotoole/streamcache"
 )
 
 // BenchmarkDevelop is used during development as a standard benchmark
@@ -247,14 +248,9 @@ func cond[T any](cond bool, a, b T) T {
 var rdrCounts = []int{
 	1,
 	2,
-	// 3,
-	// 4,
 	7,
-	// 16,
 	93,
-	// 531 ,
 	17001,
-	// 93125,
 }
 
 const (

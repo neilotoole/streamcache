@@ -24,7 +24,7 @@ $ cat myfile.ext | typedetect
 In this scenario, `typedetect` wants to detect
 and print the type of data in the file/pipe, and then print the contents.
 That detection sampling could be done in a separate goroutine per sampler type.
-The input file could be, let's say, a JSON file or an XML file.
+The input file could be, let's say, a JSON file, or an XML file.
 
 The obvious approach is to inspect the first few tokens of the
 input, and check if the tokens are either valid JSON or valid XML.
@@ -110,7 +110,9 @@ Read 12 bytes from stdin
 - [`in-out-err`](./examples/in-out-err): copy `stdin` to both `stdout` and `stderr`.
 - [`typedetect`](./examples/typedetect): detect the type of input data, and print the head and tail
   of the contents.
+  ![streamcache_typedetect.png](examples/typedetect/streamcache_typedetect.png)
 - [`multicase`](./examples/multicase): transform each line of input to upper, lower, and title case.
+  ![streamcache_multicase.png](examples/multicase/streamcache_multicase.png)
 
 ## Related work
 

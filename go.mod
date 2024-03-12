@@ -1,13 +1,12 @@
 module github.com/neilotoole/streamcache
 
-// Minimum version 1.20 because that's when context.Cause was introduced.
 go 1.21
 
-toolchain go1.21.6
+toolchain go1.22.1
 
 require (
 	github.com/neilotoole/fifomu v0.1.1
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 )
 
 require (
