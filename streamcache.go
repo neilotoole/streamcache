@@ -646,8 +646,7 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 // Close closes this Reader. If the parent Stream is not sealed, this method
 // ultimately returns nil. If the parent Stream is sealed and this is the last
 // remaining reader, the Stream's source reader is closed, if it implements
-// io.Closer. At that point, and the channel returned by Stream.Done
-// is closed.
+// io.Closer. At that point, the channel returned by Stream.Done is closed.
 //
 // If you don't want the source to be closed, wrap it via io.NopCloser before
 // passing it to streamcache.New.
