@@ -117,3 +117,7 @@ Read 12 bytes from stdin
 ## Related work
 
 - [`djherbis/fscache`](https://github.com/djherbis/fscache)
+- [`sq`](https://github.com/neilotoole/sq) uses `streamcache` to stream stdin / HTTP response bodies,
+  allowing `sq` to being processing data on the fly.
+  ![sq streamcache](https://github.com/neilotoole/sq/blob/master/.images/sq_inspect_remote_s3.png)
+- [`fifomu`](https://github.com/neilotoole/fifomu) is a FIFO mutex, used by `streamcache`, which in turn is used by [`sq`](https://github.com/neilotoole/sq).
