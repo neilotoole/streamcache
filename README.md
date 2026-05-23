@@ -43,6 +43,9 @@ the final `Reader` reads directly from the underlying source.
 
 ## Usage
 
+> [!NOTE]
+> Requires Go 1.26+.
+
 Add to your `go.mod` via `go get`:
 
 ```shell
