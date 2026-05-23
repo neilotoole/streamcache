@@ -612,7 +612,9 @@ func TestStreamSource(t *testing.T) {
 
 	// Close the source (i.e. the file), and then try
 	// to read from the reader.
-	require.NoError(t, gotSrc.(io.ReadCloser).Close())
+	rc, ok := gotSrc.(io.ReadCloser)
+	require.True(t, ok)
+	require.NoError(t, rc.Close())
 
 	n, readErr = r.Read(buf)
 	require.Error(t, readErr)

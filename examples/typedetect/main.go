@@ -73,7 +73,7 @@ func main() {
 			printErr(err)
 			return
 		}
-		in, err = os.Open(os.Args[1])
+		in, err = os.Open(os.Args[1]) //nolint:gosec // example CLI: opening the user-supplied path is the intent
 		if err != nil {
 			printErr(err)
 			return
