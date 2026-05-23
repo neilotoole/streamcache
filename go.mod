@@ -1,10 +1,10 @@
 module github.com/neilotoole/streamcache
 
-go 1.20
+go 1.26
 
 require (
-	github.com/neilotoole/fifomu v0.1.2
-	github.com/stretchr/testify v1.9.0
+	github.com/neilotoole/fifomu v0.2.0
+	github.com/stretchr/testify v1.11.1
 )
 
 require (
