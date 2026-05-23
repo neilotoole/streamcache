@@ -587,6 +587,33 @@ func TestContextCancelBeforeSrcRead(t *testing.T) {
 	wg.Wait()
 }
 
+// panicCloser is an io.ReadCloser whose Close always panics. It's used to
+// verify that Reader.Close stays safe to call repeatedly even when the
+// underlying source's Close panics on the first call.
+type panicCloser struct{ io.Reader }
+
+func (panicCloser) Close() error { panic("close boom") }
+
+// TestReaderClose_SourcePanics verifies that if the underlying source's Close
+// panics on the first Reader.Close, a subsequent Reader.Close does not
+// nil-dereference the stored close result (it returns nil instead of panicking).
+func TestReaderClose_SourcePanics(t *testing.T) {
+	t.Parallel()
+	s := streamcache.New(panicCloser{Reader: strings.NewReader(anything)})
+	r := s.NewReader(context.Background())
+	_, err := io.ReadAll(r)
+	require.NoError(t, err)
+	s.Seal()
+
+	// The first Close invokes the source's panicking Close.
+	require.Panics(t, func() { _ = r.Close() })
+
+	// A subsequent Close must not panic on a nil dereference of pCloseErr.
+	require.NotPanics(t, func() {
+		require.NoError(t, r.Close())
+	})
+}
+
 // readFinalData is a 26-byte source used by the TestReadFinal_* tests, whose
 // distinct bytes make it easy to assert exactly which bytes a read returned.
 const readFinalData = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"

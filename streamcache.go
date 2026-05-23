@@ -659,13 +659,16 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 // as the first call.
 func (r *Reader) Close() error {
 	r.closeOnce.Do(func() {
-		closeErr := r.s.close(r)
-		r.pCloseErr = &closeErr
+		// Allocate pCloseErr before calling s.close, so that it is always
+		// non-nil once closeOnce.Do has run, even if s.close panics (e.g. the
+		// underlying source's Close panics). Otherwise a subsequent Close call
+		// would skip this once-guarded func and nil-dereference pCloseErr below.
+		r.pCloseErr = new(error)
+		*r.pCloseErr = r.s.close(r)
 	})
 
-	// pCloseErr is always non-nil once closeOnce.Do has run (it is set to the
-	// address of a local variable). Subsequent calls to Close return the same
-	// result as the first call, which may be nil.
+	// Subsequent calls to Close return the same result as the first call,
+	// which may be nil.
 	return *r.pCloseErr
 }
 
