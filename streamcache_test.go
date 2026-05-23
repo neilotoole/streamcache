@@ -587,6 +587,202 @@ func TestContextCancelBeforeSrcRead(t *testing.T) {
 	wg.Wait()
 }
 
+// panicCloser is an io.ReadCloser whose Close always panics. It's used to
+// verify that Reader.Close stays safe to call repeatedly even when the
+// underlying source's Close panics on the first call.
+type panicCloser struct{ io.Reader }
+
+func (panicCloser) Close() error { panic("close boom") }
+
+// TestReaderClose_SourcePanics verifies that if the underlying source's Close
+// panics on the first Reader.Close, a subsequent Reader.Close does not
+// nil-dereference the stored close result (it returns nil instead of panicking).
+func TestReaderClose_SourcePanics(t *testing.T) {
+	t.Parallel()
+	s := streamcache.New(panicCloser{Reader: strings.NewReader(anything)})
+	r := s.NewReader(context.Background())
+	_, err := io.ReadAll(r)
+	require.NoError(t, err)
+	s.Seal()
+
+	// The first Close invokes the source's panicking Close.
+	require.Panics(t, func() { _ = r.Close() })
+
+	// A subsequent Close must not panic on a nil dereference of pCloseErr.
+	require.NotPanics(t, func() {
+		require.NoError(t, r.Close())
+	})
+}
+
+// readFinalData is a 26-byte source used by the TestReadFinal_* tests, whose
+// distinct bytes make it easy to assert exactly which bytes a read returned.
+const readFinalData = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// TestReadFinal_EndLessThanSize exercises Stream.readFinal's "end < size"
+// branch: the sealed final reader's request is satisfied entirely from the
+// cache, with unread cache bytes still remaining afterwards.
+func TestReadFinal_EndLessThanSize(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := streamcache.New(strings.NewReader(readFinalData))
+
+	// r1 fills the cache to the full 26 bytes. Reading exactly len(data)
+	// bytes does not hit EOF, so readErr stays nil. r1 is then closed.
+	r1 := s.NewReader(ctx)
+	n, err := r1.Read(make([]byte, len(readFinalData)))
+	require.NoError(t, err)
+	require.Equal(t, len(readFinalData), n)
+	require.NoError(t, r1.Close())
+
+	// r2 is the fresh final reader, sitting at offset 0.
+	r2 := s.NewReader(ctx)
+	s.Seal()
+
+	buf := make([]byte, 10) // end = 0 + 10 < 26
+	n, err = r2.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 10, n)
+	require.Equal(t, "ABCDEFGHIJ", string(buf))
+	// The cache is still in use, as unread bytes remain.
+	require.Equal(t, len(readFinalData), len(streamcache.CacheInternal(s)))
+	require.NoError(t, r2.Close())
+}
+
+// TestReadFinal_EndEqualsSize exercises the "end == size" branch: the read
+// exactly empties the cache, after which the reader switches to reading
+// directly from src and the cache is released.
+func TestReadFinal_EndEqualsSize(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := streamcache.New(strings.NewReader(readFinalData))
+
+	r1 := s.NewReader(ctx)
+	n, err := r1.Read(make([]byte, len(readFinalData)))
+	require.NoError(t, err)
+	require.Equal(t, len(readFinalData), n)
+	require.NoError(t, r1.Close())
+
+	r2 := s.NewReader(ctx)
+	s.Seal()
+
+	buf := make([]byte, len(readFinalData)) // end == size == 26
+	n, err = r2.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, len(readFinalData), n)
+	require.Equal(t, readFinalData, string(buf))
+	// The cache has been released; subsequent reads come straight from src.
+	require.Nil(t, streamcache.CacheInternal(s))
+
+	// The next read is direct from src, which is now exhausted: io.EOF.
+	n, err = r2.Read(buf)
+	require.Equal(t, 0, n)
+	require.Equal(t, io.EOF, err)
+	require.NoError(t, r2.Close())
+}
+
+// TestReadFinal_OffsetEqualsSize exercises the "offset == size" branch: the
+// final reader has already consumed the entire cache, so its next read is
+// served directly from src.
+func TestReadFinal_OffsetEqualsSize(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const half = 13
+	s := streamcache.New(strings.NewReader(readFinalData))
+
+	// r1 fills the cache to 13 bytes; src still has more, so readErr is nil.
+	r1 := s.NewReader(ctx)
+	n, err := r1.Read(make([]byte, half))
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+
+	// r2 consumes those 13 cached bytes, advancing to offset == size.
+	r2 := s.NewReader(ctx)
+	n, err = r2.Read(make([]byte, half))
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+	require.Equal(t, half, streamcache.ReaderOffset(r2))
+
+	require.NoError(t, r1.Close())
+	s.Seal()
+
+	// r2 is now the final reader at offset == size, so this read goes to src.
+	buf := make([]byte, half)
+	n, err = r2.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+	require.Equal(t, readFinalData[half:], string(buf))
+	require.NoError(t, r2.Close())
+}
+
+// TestReadFinal_OffsetEqualsSize_SrcError exercises the error sub-path of the
+// "offset == size" branch, where the direct read from src returns an error.
+func TestReadFinal_OffsetEqualsSize_SrcError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const half = 13
+	wantErr := errors.New("boom")
+	src := &tweakableReader{data: []byte(strings.Repeat("X", half))}
+	s := streamcache.New(src)
+
+	r1 := s.NewReader(ctx)
+	n, err := r1.Read(make([]byte, half))
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+
+	r2 := s.NewReader(ctx)
+	n, err = r2.Read(make([]byte, half))
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+
+	require.NoError(t, r1.Close())
+	s.Seal()
+
+	// Arrange for the next src read to fail.
+	src.data = nil
+	src.err = wantErr
+
+	n, err = r2.Read(make([]byte, half))
+	require.Equal(t, 0, n)
+	require.True(t, errors.Is(err, wantErr))
+	requireTake(t, s.Filled()) // srcDoneCh is closed on src error.
+	require.NoError(t, r2.Close())
+}
+
+// TestReadFinal_Overlap exercises the default "overlap" branch, where the read
+// spans the end of the cache and into src. readFinal returns only the cached
+// portion, releases the cache, and switches the reader to src-direct for the
+// remainder.
+func TestReadFinal_Overlap(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const half = 13
+	s := streamcache.New(strings.NewReader(readFinalData))
+
+	r1 := s.NewReader(ctx)
+	n, err := r1.Read(make([]byte, half)) // cache = 13, readErr nil
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+	require.NoError(t, r1.Close())
+
+	r2 := s.NewReader(ctx)
+	s.Seal()
+
+	// offset(0) < size(13) < end(20): an overlap read. Only the 13 cached
+	// bytes are returned; the cache is released and r2 switches to src-direct.
+	buf := make([]byte, 20)
+	n, err = r2.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, half, n)
+	require.Equal(t, readFinalData[:half], string(buf[:n]))
+	require.Nil(t, streamcache.CacheInternal(s))
+
+	// The remainder now comes directly from src.
+	rest, err := io.ReadAll(r2)
+	require.NoError(t, err)
+	require.Equal(t, readFinalData[half:], string(rest))
+	require.NoError(t, r2.Close())
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 

@@ -1,0 +1,9 @@
+# Codecov configuration.
+#
+# The examples/ programs are demonstrative `main` packages, not library
+# code, so they are excluded from coverage reporting. They are still built
+# and vetted in CI via `go build ./...` and `go test ./...`; excluding them
+# here just stops their (intentionally untested) code from skewing the
+# reported coverage of the streamcache library itself.
+ignore:
+  - "examples/**"

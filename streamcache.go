@@ -357,8 +357,9 @@ func (s *Stream) readFinal(r *Reader, p []byte, offset int) (n int, err error) {
 
 	end := offset + len(p)
 	switch {
-	// This logic should be revisited. It might be possible that
-	// some of these cases are unreachable?
+	// Every case below is reachable (and covered by the TestReadFinal_* tests)
+	// except offset > s.size, which is a defensive guard: a reader's offset
+	// never exceeds the number of bytes read from src.
 	case end < s.size:
 		// The read can be satisfied entirely from the cache.
 		// Subsequent reads could also be satisfied by the
@@ -658,17 +659,17 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 // as the first call.
 func (r *Reader) Close() error {
 	r.closeOnce.Do(func() {
-		closeErr := r.s.close(r)
-		r.pCloseErr = &closeErr
+		// Allocate pCloseErr before calling s.close, so that it is always
+		// non-nil once closeOnce.Do has run, even if s.close panics (e.g. the
+		// underlying source's Close panics). Otherwise a subsequent Close call
+		// would skip this once-guarded func and nil-dereference pCloseErr below.
+		r.pCloseErr = new(error)
+		*r.pCloseErr = r.s.close(r)
 	})
 
-	if r.pCloseErr != nil {
-		// Already closed. Return the same error as the first call
-		// to Close (which may be nil).
-		return *r.pCloseErr
-	}
-
-	return nil
+	// Subsequent calls to Close return the same result as the first call,
+	// which may be nil.
+	return *r.pCloseErr
 }
 
 // removeElement returns a (possibly new) slice that contains the
