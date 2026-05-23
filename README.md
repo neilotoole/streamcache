@@ -15,7 +15,7 @@ useful for scenarios where multiple readers may wish to sample the start of a
 stream, but only one reader will read the entire stream.
 
 Let's say we have a program [`typedetect`](./examples/typedetect),
-and we're reading from ``stdin``. For example:
+and we're reading from `stdin`. For example:
 
 ```shell
 $ cat myfile.ext | typedetect  
