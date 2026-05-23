@@ -28,4 +28,10 @@ jobs:
         version: ${{ env.GOLANGCI_LINT_VERSION }}
 
     - name: Test
-      run: go test -v ./...
+      run: go test -v -coverprofile=coverage.out -covermode=atomic ./...
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v6
+      with:
+        files: coverage.out
+        token: ${{ secrets.CODECOV_TOKEN }}
