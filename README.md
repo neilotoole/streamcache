@@ -4,6 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/neilotoole/streamcache)](https://goreportcard.com/report/neilotoole/streamcache)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/neilotoole/streamcache/blob/master/LICENSE)
 ![Workflow](https://github.com/neilotoole/streamcache/actions/workflows/go.yml/badge.svg)
+[![codecov](https://codecov.io/gh/neilotoole/streamcache/graph/badge.svg)](https://codecov.io/gh/neilotoole/streamcache)
 
 
 Package [`streamcache`](https://pkg.go.dev/github.com/neilotoole/streamcache)
