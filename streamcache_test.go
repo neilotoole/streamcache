@@ -917,6 +917,67 @@ func TestMaxCacheSize_OverflowThenSeal(t *testing.T) {
 	require.NoError(t, r2.Close())
 }
 
+func TestMaxCacheSize_OvershootBound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 4096
+		bufSize = 1024
+		srcSize = 1 << 20
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	buf := make([]byte, bufSize)
+	var err error
+	for err == nil {
+		_, err = r.Read(buf)
+	}
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+
+	// The cache strictly exceeds the limit (the crossing read is kept) by at
+	// most one source read (the consuming reader's buffer length).
+	cache := streamcache.CacheInternal(s)
+	require.Greater(t, len(cache), limit)
+	require.LessOrEqual(t, len(cache), limit+bufSize)
+}
+
+func TestMaxCacheSize_Concurrent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit      = 1000
+		srcSize    = 200_000
+		numReaders = 8
+	)
+	src := newDelayReader(newLimitRandReader(srcSize), time.Microsecond, true)
+	s := streamcache.New(src, streamcache.MaxCacheSize(limit))
+
+	errs := make([]error, numReaders)
+	var wg sync.WaitGroup
+	for i := range numReaders {
+		r := s.NewReader(ctx)
+		wg.Add(1)
+		go func(i int, r *streamcache.Reader) {
+			defer wg.Done()
+			defer r.Close()
+			_, errs[i] = io.Copy(io.Discard, r)
+		}(i, r)
+	}
+	wg.Wait()
+
+	// The source is far larger than the limit, so every reader eventually needs
+	// bytes beyond the cap and ends with ErrCacheLimit.
+	for i := range errs {
+		require.Truef(t, errors.Is(errs[i], streamcache.ErrCacheLimit),
+			"reader %d: got %v", i, errs[i])
+	}
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 
