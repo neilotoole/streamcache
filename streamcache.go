@@ -45,6 +45,10 @@ import (
 // already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
 
+// ErrCacheLimit is returned by Reader.Read when the cache size limit
+// configured via MaxCacheSize is exceeded. See MaxCacheSize.
+var ErrCacheLimit = errors.New("cache size limit exceeded")
+
 // Stream mediates access to the bytes of an underlying source io.Reader.
 // Multiple callers can invoke Stream.NewReader to obtain a Reader, each of
 // which can read the full or partial contents of the source reader. Note that
@@ -91,6 +95,13 @@ type Stream struct {
 	// size is the count of bytes read from src.
 	size int
 
+	// maxCacheSize is the maximum number of bytes that cache may hold. If the
+	// source yields more bytes than this, readMain returns ErrCacheLimit and
+	// the Stream enters a terminal error state. A value <= 0 means no limit. It
+	// is set once by New and never mutated thereafter, so it is safe to read
+	// without holding a lock. See MaxCacheSize.
+	maxCacheSize int
+
 	// cMu guards concurrent access to Stream's fields and methods.
 	cMu sync.RWMutex
 
@@ -109,13 +120,53 @@ type Stream struct {
 	// src locks.
 }
 
-// New returns a new Stream that wraps src. Use Stream.NewReader to read from src.
-func New(src io.Reader) *Stream {
+// Option is a configuration option for New.
+type Option interface {
+	apply(s *Stream)
+}
+
+// optionFunc adapts a function to the Option interface.
+type optionFunc func(s *Stream)
+
+func (f optionFunc) apply(s *Stream) { f(s) }
+
+// MaxCacheSize returns an Option for New that caps the number of bytes that the
+// Stream will buffer in its in-memory cache. If the source contains more than n
+// bytes, a Reader.Read that would grow the cache beyond n returns ErrCacheLimit,
+// and the Stream thereafter is in a terminal error state (see Stream.Err).
+//
+// A value of n <= 0 (the default) means no limit.
+//
+// The limit applies only while the cache is in use: once the Stream is sealed
+// (see Stream.Seal) and only the final Reader remains, that Reader reads
+// directly from the source, bypassing the cache, and is not subject to the
+// limit.
+//
+// Because detecting that the source exceeds n bytes requires reading past n,
+// the cache may transiently grow by up to one source read beyond n before
+// ErrCacheLimit is returned.
+func MaxCacheSize(n int) Option {
+	return optionFunc(func(s *Stream) {
+		s.maxCacheSize = n
+	})
+}
+
+// New returns a new Stream that wraps src, configured by any provided opts. Use
+// Stream.NewReader to read from src.
+//
+// See MaxCacheSize for an option that bounds the Stream's memory use.
+func New(src io.Reader, opts ...Option) *Stream {
 	c := &Stream{
 		src:        src,
 		cache:      make([]byte, 0),
 		rdrsDoneCh: make(chan struct{}),
 		srcDoneCh:  make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt.apply(c)
+		}
 	}
 
 	return c

@@ -783,6 +783,31 @@ func TestReadFinal_Overlap(t *testing.T) {
 	require.NoError(t, r2.Close())
 }
 
+func TestMaxCacheSize_APIAndBackwardCompat(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// New with no options behaves exactly as before.
+	s1 := streamcache.New(strings.NewReader(anything))
+	r1 := s1.NewReader(ctx)
+	defer r1.Close()
+	b1, err := io.ReadAll(r1)
+	require.NoError(t, err)
+	require.Equal(t, anything, string(b1))
+
+	// New accepts MaxCacheSize; a limit larger than the source is never hit.
+	s2 := streamcache.New(strings.NewReader(anything), streamcache.MaxCacheSize(1<<20))
+	r2 := s2.NewReader(ctx)
+	defer r2.Close()
+	b2, err := io.ReadAll(r2)
+	require.NoError(t, err)
+	require.Equal(t, anything, string(b2))
+	require.False(t, errors.Is(s2.Err(), streamcache.ErrCacheLimit))
+
+	// ErrCacheLimit is a defined sentinel.
+	require.NotNil(t, streamcache.ErrCacheLimit)
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 
