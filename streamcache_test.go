@@ -842,6 +842,81 @@ func TestMaxCacheSize_Overflow(t *testing.T) {
 	require.Equal(t, n1, n2) // r2 drains exactly the cached bytes
 }
 
+func TestMaxCacheSize_ExactFit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const limit = 1000
+	// Source is exactly limit bytes: must complete with io.EOF, not overflow.
+	s := streamcache.New(bytes.NewReader(make([]byte, limit)), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	n, err := io.Copy(io.Discard, r)
+	require.NoError(t, err)
+	require.Equal(t, int64(limit), n)
+	require.True(t, errors.Is(s.Err(), io.EOF))
+}
+
+func TestMaxCacheSize_Unlimited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const srcSize = 100_000
+	for _, limit := range []int{0, -1} {
+		s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+		r := s.NewReader(ctx)
+		n, err := io.Copy(io.Discard, r)
+		require.NoError(t, err)
+		require.Equal(t, int64(srcSize), n)
+		require.NoError(t, r.Close())
+	}
+}
+
+func TestMaxCacheSize_DirectReadNotLimited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 100_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	s.Seal() // single reader + sealed => reads directly from src, bypassing cache
+
+	n, err := io.Copy(io.Discard, r)
+	require.NoError(t, err)
+	require.Equal(t, int64(srcSize), n)
+	require.NoError(t, r.Close())
+}
+
+func TestMaxCacheSize_OverflowThenSeal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 100_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r1 := s.NewReader(ctx)
+	r2 := s.NewReader(ctx)
+
+	// r1 trips the overflow.
+	_, err := io.Copy(io.Discard, r1)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.NoError(t, r1.Close())
+
+	// Seal, leaving r2 as the final reader. The Stream is terminally errored,
+	// so r2 drains the cache then also sees ErrCacheLimit, rather than switching
+	// to a direct read.
+	s.Seal()
+	_, err = io.Copy(io.Discard, r2)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.NoError(t, r2.Close())
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 
