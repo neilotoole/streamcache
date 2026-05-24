@@ -339,6 +339,23 @@ TOP:
 		}
 	}
 
+	// Before growing the cache, enforce the cache size limit, if one is set. If
+	// the cache has already grown beyond the limit, we refuse to read more from
+	// src, and put the Stream into a terminal error state with ErrCacheLimit.
+	// Reading s.size here is safe: we hold the src lock, and only the src lock
+	// holder mutates s.size while the cache is in use.
+	if s.maxCacheSize > 0 && s.size > s.maxCacheSize {
+		s.cMu.Lock() // write lock
+		if s.readErr == nil {
+			s.readErr = ErrCacheLimit
+			close(s.srcDoneCh)
+		}
+		err = s.readErr
+		s.cMu.Unlock()   // write unlock
+		s.srcMu.Unlock() // src unlock
+		return 0, err
+	}
+
 	// OK, this time, we're REALLY going to read from src.
 	n, err = s.src.Read(p)
 	if n == 0 && err == nil {

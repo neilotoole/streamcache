@@ -808,6 +808,40 @@ func TestMaxCacheSize_APIAndBackwardCompat(t *testing.T) {
 	require.NotNil(t, streamcache.ErrCacheLimit)
 }
 
+func TestMaxCacheSize_Overflow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 200_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+
+	// r1 reads until the cache overflows.
+	r1 := s.NewReader(ctx)
+	defer r1.Close()
+	n1, err := io.Copy(io.Discard, r1)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.Greater(t, n1, int64(limit)) // got the overshoot bytes
+	require.Less(t, n1, int64(srcSize))  // but not the whole source
+
+	// The whole Stream is now terminally errored.
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+	requireTake(t, s.Filled())
+
+	size, errTotal := s.Total(ctx)
+	require.True(t, errors.Is(errTotal, streamcache.ErrCacheLimit))
+	require.Greater(t, size, limit)
+
+	// A second reader drains the cached bytes, then also sees ErrCacheLimit.
+	r2 := s.NewReader(ctx)
+	defer r2.Close()
+	n2, err := io.Copy(io.Discard, r2)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.Equal(t, n1, n2) // r2 drains exactly the cached bytes
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 
