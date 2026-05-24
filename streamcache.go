@@ -517,9 +517,10 @@ func (s *Stream) Done() <-chan struct{} {
 }
 
 // Filled returns a channel that is closed when the underlying source reader
-// returns an error, including io.EOF. If the source reader returns an error, it
-// is never read from again. If the source reader does not return an error, this
-// channel is never closed.
+// returns an error, including io.EOF, or when the cache size limit configured
+// via MaxCacheSize is exceeded. If the source reader returns an error, it is
+// never read from again. If the source reader does not return an error and the
+// cache size limit is not exceeded, this channel is never closed.
 //
 // See also: Stream.Done.
 func (s *Stream) Filled() <-chan struct{} {
@@ -547,6 +548,9 @@ func (s *Stream) Size() int {
 // That is to say, Total returning does not necessarily mean that all readers
 // are closed.
 //
+// If the cache size limit configured via MaxCacheSize is exceeded, Total
+// returns the number of bytes cached so far and ErrCacheLimit.
+//
 // See also: Stream.Size, Stream.Err, Stream.Filled, Stream.Done.
 func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	if ctx == nil {
@@ -572,6 +576,9 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 // source reader, which may be io.EOF. After the source reader returns an
 // error, it is never read from again, and the channel returned by Stream.Filled
 // is closed.
+//
+// Err also returns ErrCacheLimit if the cache size limit configured via
+// MaxCacheSize was exceeded.
 func (s *Stream) Err() error {
 	s.cMu.RLock()         // read lock
 	defer s.cMu.RUnlock() // read unlock
