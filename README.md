@@ -130,9 +130,11 @@ if _, err := io.Copy(os.Stdout, r); err != nil {
 
 If the source yields more than the configured limit, `Reader.Read` returns
 `streamcache.ErrCacheLimit` and the stream enters a terminal error state
-(`Stream.Err` returns `streamcache.ErrCacheLimit`). The limit does not apply to
-the final reader once the stream is sealed, since that reader reads directly
-from the source and does not use the cache.
+(`Stream.Err` returns `streamcache.ErrCacheLimit`). If the read that crosses the
+limit also returns a genuine (non-`io.EOF`) error from the source, that source
+error is reported instead. The limit does not apply to the final reader once the
+stream is sealed, since that reader reads directly from the source and does not
+use the cache.
 
 ## Examples
 

@@ -45,8 +45,10 @@ import (
 // already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
 
-// ErrCacheLimit is returned by Reader.Read when the cache size limit
-// configured via MaxCacheSize is exceeded. See MaxCacheSize.
+// ErrCacheLimit is returned by Reader.Read when the Stream terminates because
+// the cache size limit configured via MaxCacheSize was exceeded. If the read
+// that crosses the limit also returns a non-EOF error from the source, that
+// source error is reported instead. See MaxCacheSize.
 var ErrCacheLimit = errors.New("cache size limit exceeded")
 
 // Stream mediates access to the bytes of an underlying source io.Reader.
@@ -132,8 +134,10 @@ func (f optionFunc) apply(s *Stream) { f(s) }
 
 // MaxCacheSize returns an Option for New that caps the number of bytes that the
 // Stream will buffer in its in-memory cache. If the source contains more than n
-// bytes, a Reader.Read that would grow the cache beyond n returns ErrCacheLimit,
-// and the Stream thereafter is in a terminal error state (see Stream.Err).
+// bytes, the Reader.Read that grows the cache beyond n returns ErrCacheLimit
+// (unless that read also returns a non-EOF source error, which is reported
+// instead), and the Stream thereafter is in a terminal error state (see
+// Stream.Err).
 //
 // A value of n <= 0 (the default) means no limit.
 //
@@ -145,9 +149,11 @@ func (f optionFunc) apply(s *Stream) { f(s) }
 // Because detecting that the source has more than n bytes requires reading past
 // n, the cache may exceed n by up to one source read: the read that grows the
 // cache beyond n returns ErrCacheLimit together with the bytes it read, and the
-// Stream enters a terminal error state (see Stream.Err). A source of exactly n
-// bytes completes normally with io.EOF. The guarantee is that the cache will not
-// grow unboundedly, not that it never exceeds n.
+// Stream enters a terminal error state (see Stream.Err). If that same read also
+// returns a non-EOF error from the source, the source error is reported instead,
+// as it is more diagnostic. A source of exactly n bytes completes normally with
+// io.EOF. The guarantee is that the cache will not grow unboundedly, not that it
+// never exceeds n.
 func MaxCacheSize(n int) Option {
 	return optionFunc(func(s *Stream) {
 		s.maxCacheSize = n
