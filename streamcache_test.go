@@ -783,6 +783,273 @@ func TestReadFinal_Overlap(t *testing.T) {
 	require.NoError(t, r2.Close())
 }
 
+func TestMaxCacheSize_APIAndBackwardCompat(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// New with no options behaves exactly as before.
+	s1 := streamcache.New(strings.NewReader(anything))
+	r1 := s1.NewReader(ctx)
+	defer r1.Close()
+	b1, err := io.ReadAll(r1)
+	require.NoError(t, err)
+	require.Equal(t, anything, string(b1))
+
+	// New accepts MaxCacheSize; a limit larger than the source is never hit.
+	s2 := streamcache.New(strings.NewReader(anything), streamcache.MaxCacheSize(1<<20))
+	r2 := s2.NewReader(ctx)
+	defer r2.Close()
+	b2, err := io.ReadAll(r2)
+	require.NoError(t, err)
+	require.Equal(t, anything, string(b2))
+	require.False(t, errors.Is(s2.Err(), streamcache.ErrCacheLimit))
+
+	// ErrCacheLimit is a defined sentinel.
+	require.NotNil(t, streamcache.ErrCacheLimit)
+}
+
+func TestMaxCacheSize_Overflow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 200_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+
+	// r1 reads until the cache overflows.
+	r1 := s.NewReader(ctx)
+	defer r1.Close()
+	n1, err := io.Copy(io.Discard, r1)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.Greater(t, n1, int64(limit)) // got the overshoot bytes
+	require.Less(t, n1, int64(srcSize))  // but not the whole source
+
+	// The whole Stream is now terminally errored.
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+	requireTake(t, s.Filled())
+
+	size, errTotal := s.Total(ctx)
+	require.True(t, errors.Is(errTotal, streamcache.ErrCacheLimit))
+	require.Greater(t, size, limit)
+
+	// A second reader drains the cached bytes, then also sees ErrCacheLimit.
+	r2 := s.NewReader(ctx)
+	defer r2.Close()
+	n2, err := io.Copy(io.Discard, r2)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.Equal(t, n1, n2) // r2 drains exactly the cached bytes
+}
+
+func TestMaxCacheSize_ExactFit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const limit = 1000
+	// Source is exactly limit bytes: must complete with io.EOF, not overflow.
+	s := streamcache.New(bytes.NewReader(make([]byte, limit)), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	n, err := io.Copy(io.Discard, r)
+	require.NoError(t, err)
+	require.Equal(t, int64(limit), n)
+	require.True(t, errors.Is(s.Err(), io.EOF))
+}
+
+func TestMaxCacheSize_Unlimited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const srcSize = 100_000
+	for _, limit := range []int{0, -1} {
+		s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+		r := s.NewReader(ctx)
+		n, err := io.Copy(io.Discard, r)
+		require.NoError(t, err)
+		require.Equal(t, int64(srcSize), n)
+		require.NoError(t, r.Close())
+	}
+}
+
+func TestMaxCacheSize_DirectReadNotLimited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 100_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	s.Seal() // single reader + sealed => reads directly from src, bypassing cache
+
+	n, err := io.Copy(io.Discard, r)
+	require.NoError(t, err)
+	require.Equal(t, int64(srcSize), n)
+	require.NoError(t, r.Close())
+}
+
+func TestMaxCacheSize_OverflowThenSeal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		srcSize = 100_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r1 := s.NewReader(ctx)
+	r2 := s.NewReader(ctx)
+
+	// r1 trips the overflow.
+	_, err := io.Copy(io.Discard, r1)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.NoError(t, r1.Close())
+
+	// Seal, leaving r2 as the final reader. The Stream is terminally errored,
+	// so r2 drains the cache then also sees ErrCacheLimit, rather than switching
+	// to a direct read.
+	s.Seal()
+	_, err = io.Copy(io.Discard, r2)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.NoError(t, r2.Close())
+}
+
+func TestMaxCacheSize_OvershootBound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 4096
+		bufSize = 1024
+		srcSize = 1 << 20
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	buf := make([]byte, bufSize)
+	var err error
+	for err == nil {
+		_, err = r.Read(buf)
+	}
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+
+	// The cache strictly exceeds the limit (the crossing read is kept) by at
+	// most one source read (the consuming reader's buffer length).
+	cache := streamcache.CacheInternal(s)
+	require.Greater(t, len(cache), limit)
+	require.LessOrEqual(t, len(cache), limit+bufSize)
+}
+
+func TestMaxCacheSize_Concurrent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit      = 1000
+		srcSize    = 200_000
+		numReaders = 8
+	)
+	src := newDelayReader(newLimitRandReader(srcSize), time.Microsecond, true)
+	s := streamcache.New(src, streamcache.MaxCacheSize(limit))
+
+	errs := make([]error, numReaders)
+	var wg sync.WaitGroup
+	for i := range numReaders {
+		r := s.NewReader(ctx)
+		wg.Add(1)
+		go func(i int, r *streamcache.Reader) {
+			defer wg.Done()
+			defer r.Close()
+			_, errs[i] = io.Copy(io.Discard, r)
+		}(i, r)
+	}
+	wg.Wait()
+
+	// The source is far larger than the limit, so every reader eventually needs
+	// bytes beyond the cap and ends with ErrCacheLimit.
+	for i := range errs {
+		require.Truef(t, errors.Is(errs[i], streamcache.ErrCacheLimit),
+			"reader %d: got %v", i, errs[i])
+	}
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+}
+
+func TestMaxCacheSize_TerminalOnOverflowRead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		limit   = 1000
+		bufSize = 4096 // a single read overshoots the limit
+		srcSize = 100_000
+	)
+	s := streamcache.New(newLimitRandReader(srcSize), streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	// The single read that grows the cache past the limit returns ErrCacheLimit
+	// on that same call (with the bytes it read), and sets the terminal state
+	// immediately — no further read is required.
+	buf := make([]byte, bufSize)
+	n, err := r.Read(buf)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.Greater(t, n, 0)
+
+	// Terminal state is reflected without any further read.
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+	requireTake(t, s.Filled())
+	size, errTotal := s.Total(ctx)
+	require.True(t, errors.Is(errTotal, streamcache.ErrCacheLimit))
+	require.Greater(t, size, limit)
+}
+
+func TestMaxCacheSize_OverLimitWithBundledEOF(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const limit = 1000
+	// A source that returns more than `limit` bytes together with io.EOF in a
+	// single read still reports ErrCacheLimit (the source exceeded the limit),
+	// not io.EOF.
+	src := &tweakableReader{data: make([]byte, limit+500), err: io.EOF}
+	s := streamcache.New(src, streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	buf := make([]byte, limit+500)
+	n, err := r.Read(buf)
+	require.Equal(t, limit+500, n)
+	require.True(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
+}
+
+func TestMaxCacheSize_SourceErrorTakesPrecedence(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const limit = 1000
+	srcErr := errors.New("boom")
+	// The source returns limit+500 bytes together with a non-EOF error in a
+	// single read; those bytes push the cache past the limit. The genuine
+	// source error is reported, not ErrCacheLimit (io.EOF, by contrast, is
+	// superseded by ErrCacheLimit — see TestMaxCacheSize_OverLimitWithBundledEOF).
+	src := newErrorAfterNReader(limit+500, srcErr)
+	s := streamcache.New(src, streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	buf := make([]byte, limit+500)
+	n, err := r.Read(buf)
+	require.Equal(t, limit+500, n)
+	require.True(t, errors.Is(err, srcErr))
+	require.False(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.True(t, errors.Is(s.Err(), srcErr))
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 

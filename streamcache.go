@@ -45,6 +45,12 @@ import (
 // already closed.
 var ErrAlreadyClosed = errors.New("reader is already closed")
 
+// ErrCacheLimit is returned by Reader.Read when the Stream terminates because
+// the cache size limit configured via MaxCacheSize was exceeded. If the read
+// that crosses the limit also returns a non-EOF error from the source, that
+// source error is reported instead. See MaxCacheSize.
+var ErrCacheLimit = errors.New("cache size limit exceeded")
+
 // Stream mediates access to the bytes of an underlying source io.Reader.
 // Multiple callers can invoke Stream.NewReader to obtain a Reader, each of
 // which can read the full or partial contents of the source reader. Note that
@@ -91,6 +97,13 @@ type Stream struct {
 	// size is the count of bytes read from src.
 	size int
 
+	// maxCacheSize is the maximum number of bytes that cache may hold. If the
+	// source yields more bytes than this, readMain returns ErrCacheLimit and
+	// the Stream enters a terminal error state. A value <= 0 means no limit. It
+	// is set once by New and never mutated thereafter, so it is safe to read
+	// without holding a lock. See MaxCacheSize.
+	maxCacheSize int
+
 	// cMu guards concurrent access to Stream's fields and methods.
 	cMu sync.RWMutex
 
@@ -109,13 +122,61 @@ type Stream struct {
 	// src locks.
 }
 
-// New returns a new Stream that wraps src. Use Stream.NewReader to read from src.
-func New(src io.Reader) *Stream {
+// Option is a configuration option for New.
+type Option interface {
+	apply(s *Stream)
+}
+
+// optionFunc adapts a function to the Option interface.
+type optionFunc func(s *Stream)
+
+func (f optionFunc) apply(s *Stream) { f(s) }
+
+// MaxCacheSize returns an Option for New that caps the number of bytes that the
+// Stream will buffer in its in-memory cache. If the source contains more than n
+// bytes, the Reader.Read that grows the cache beyond n returns ErrCacheLimit
+// (unless that read also returns a non-EOF source error, which is reported
+// instead), and the Stream thereafter is in a terminal error state (see
+// Stream.Err).
+//
+// A value of n <= 0 (the default) means no limit.
+//
+// The limit applies only while the cache is in use: once the Stream is sealed
+// (see Stream.Seal) and only the final Reader remains, that Reader reads
+// directly from the source, bypassing the cache, and is not subject to the
+// limit. If the limit was already exceeded before sealing, however, the Stream
+// is already in its terminal error state, and sealing does not lift it.
+//
+// Because detecting that the source has more than n bytes requires reading past
+// n, the cache may exceed n by up to one source read: the read that grows the
+// cache beyond n returns ErrCacheLimit together with the bytes it read, and the
+// Stream enters a terminal error state (see Stream.Err). If that same read also
+// returns a non-EOF error from the source, the source error is reported instead,
+// as it is more diagnostic. A source of exactly n bytes completes normally with
+// io.EOF. The guarantee is that the cache will not grow unboundedly, not that it
+// never exceeds n.
+func MaxCacheSize(n int) Option {
+	return optionFunc(func(s *Stream) {
+		s.maxCacheSize = n
+	})
+}
+
+// New returns a new Stream that wraps src, configured by any provided opts. Use
+// Stream.NewReader to read from src.
+//
+// See MaxCacheSize for an option that bounds the Stream's memory use.
+func New(src io.Reader, opts ...Option) *Stream {
 	c := &Stream{
 		src:        src,
 		cache:      make([]byte, 0),
 		rdrsDoneCh: make(chan struct{}),
 		srcDoneCh:  make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt.apply(c)
+		}
 	}
 
 	return c
@@ -299,14 +360,32 @@ TOP:
 
 	// Now we need to update the cache, so we need to get the write lock.
 	s.cMu.Lock() // write lock
-	s.readErr = err
 	if n > 0 {
 		s.size += n
 		s.cache = append(s.cache, p[:n]...)
 	}
 
+	// Enforce the cache size limit, if one is set. If this read grew the cache
+	// beyond the limit, the Stream is terminally over-limit: we report
+	// ErrCacheLimit (along with the bytes just read) instead of src's error, so
+	// that the terminal state is established the moment the cache crosses the
+	// limit, rather than on a subsequent read. The check is strictly
+	// greater-than, so a source of exactly maxCacheSize bytes does not trip it.
+	// Because the limit is enforced here, on every append, the cache can exceed
+	// maxCacheSize by at most one source read before the Stream is terminated.
+	//
+	// A genuine source error returned by this same read takes precedence: it is
+	// more diagnostic than ErrCacheLimit, so we only override err when src
+	// returned no error or io.EOF (io.EOF being normal completion, not a
+	// failure, is superseded by ErrCacheLimit).
+	if s.maxCacheSize > 0 && s.size > s.maxCacheSize && (err == nil || errors.Is(err, io.EOF)) {
+		err = ErrCacheLimit
+	}
+	s.readErr = err
+
 	if err != nil {
-		// We received an error from src, so it's done.
+		// Either src returned an error, or we hit the cache limit. Either way,
+		// src is never read from again, so the Stream is done.
 		close(s.srcDoneCh)
 	}
 
@@ -449,9 +528,10 @@ func (s *Stream) Done() <-chan struct{} {
 }
 
 // Filled returns a channel that is closed when the underlying source reader
-// returns an error, including io.EOF. If the source reader returns an error, it
-// is never read from again. If the source reader does not return an error, this
-// channel is never closed.
+// returns an error, including io.EOF, or when the cache size limit configured
+// via MaxCacheSize is exceeded. If the source reader returns an error, it is
+// never read from again. If the source reader does not return an error and the
+// cache size limit is not exceeded, this channel is never closed.
 //
 // See also: Stream.Done.
 func (s *Stream) Filled() <-chan struct{} {
@@ -468,11 +548,14 @@ func (s *Stream) Size() int {
 	return s.size
 }
 
-// Total blocks until the source reader is fully read, and returns the total
-// number of bytes read from the source, and any read error other than io.EOF
-// returned by the source. If ctx is cancelled, zero and the context's cause
-// error (per context.Cause) are returned. If source returned a non-EOF error,
-// that error and the total number of bytes read are returned.
+// Total blocks until the Stream reaches a terminal state — the source is fully
+// read (io.EOF), the source returns a non-EOF error, or the cache size limit
+// (see MaxCacheSize) is exceeded — and returns the number of bytes read from the
+// source so far, along with any terminal error other than io.EOF. When the
+// cache size limit is what ended the stream, the returned size may be less than
+// the source's full length. If ctx is cancelled, zero and the context's cause
+// error (per context.Cause) are returned. If the source returned a non-EOF
+// error, that error and the number of bytes read are returned.
 //
 // Note that Total only returns if the channel returned by Stream.Filled
 // is closed, but Total can return even if Stream.Done is not closed.
@@ -500,10 +583,11 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	}
 }
 
-// Err returns the first error (if any) that was returned by the underlying
-// source reader, which may be io.EOF. After the source reader returns an
-// error, it is never read from again, and the channel returned by Stream.Filled
-// is closed.
+// Err returns the first error (if any) that put the Stream into its terminal
+// state: an error returned by the underlying source reader (which may be
+// io.EOF), or ErrCacheLimit if the cache size limit (see MaxCacheSize) was
+// exceeded. Once the Stream is terminal, the source is never read from again,
+// and the channel returned by Stream.Filled is closed.
 func (s *Stream) Err() error {
 	s.cMu.RLock()         // read lock
 	defer s.cMu.RUnlock() // read unlock

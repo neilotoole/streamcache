@@ -109,6 +109,33 @@ hello world
 Read 12 bytes from stdin
 ```
 
+## Limiting cache size
+
+By default, a `Stream` caches in memory every byte read from the source until
+the stream is sealed down to its final reader. For an unbounded source, use the
+`MaxCacheSize` option to cap how much the stream will buffer:
+
+```go
+ctx := context.Background()
+stream := streamcache.New(os.Stdin, streamcache.MaxCacheSize(1_000_000))
+
+r := stream.NewReader(ctx)
+defer r.Close()
+if _, err := io.Copy(os.Stdout, r); err != nil {
+    if errors.Is(err, streamcache.ErrCacheLimit) {
+        // The source exceeded the 1 MB cache limit.
+    }
+}
+```
+
+If the source yields more than the configured limit, `Reader.Read` returns
+`streamcache.ErrCacheLimit` and the stream enters a terminal error state
+(`Stream.Err` returns `streamcache.ErrCacheLimit`). If the read that crosses the
+limit also returns a genuine (non-`io.EOF`) error from the source, that source
+error is reported instead. The limit does not apply to the final reader once the
+stream is sealed, since that reader reads directly from the source and does not
+use the cache.
+
 ## Examples
 
 - [`in-out-err`](./examples/in-out-err): copy `stdin` to both `stdout` and `stderr`.
