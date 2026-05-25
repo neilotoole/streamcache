@@ -152,3 +152,16 @@ use the cache.
   allowing `sq` to being processing data on the fly.
   ![sq streamcache](https://github.com/neilotoole/sq/blob/master/.images/sq_inspect_remote_s3.png)
 - [`fifomu`](https://github.com/neilotoole/fifomu) is a FIFO mutex, used by `streamcache`, which in turn is used by [`sq`](https://github.com/neilotoole/sq).
+
+## Changelog
+
+### Unreleased
+
+#### Added
+
+- `MaxCacheSize` functional option for `New`, capping the number of bytes
+  buffered in the in-memory cache, plus the `ErrCacheLimit` sentinel returned
+  (and a terminal stream state) when the source exceeds the limit. See
+  [Limiting cache size](#limiting-cache-size).
+  ([#8](https://github.com/neilotoole/streamcache/pull/8), closes
+  [#5](https://github.com/neilotoole/streamcache/issues/5))
