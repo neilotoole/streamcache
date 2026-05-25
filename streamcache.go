@@ -143,8 +143,10 @@ func (f optionFunc) apply(s *Stream) { f(s) }
 // limit.
 //
 // Because detecting that the source exceeds n bytes requires reading past n,
-// the cache may transiently grow by up to one source read beyond n before
-// ErrCacheLimit is returned.
+// the cache may grow by up to one source read beyond n. A source whose total
+// size falls within that overshoot window may therefore be read to completion
+// (returning io.EOF) without ErrCacheLimit ever being returned. The guarantee
+// is that the cache will not grow unboundedly, not that it never exceeds n.
 func MaxCacheSize(n int) Option {
 	return optionFunc(func(s *Stream) {
 		s.maxCacheSize = n
