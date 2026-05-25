@@ -142,11 +142,12 @@ func (f optionFunc) apply(s *Stream) { f(s) }
 // directly from the source, bypassing the cache, and is not subject to the
 // limit.
 //
-// Because detecting that the source exceeds n bytes requires reading past n,
-// the cache may grow by up to one source read beyond n. A source whose total
-// size falls within that overshoot window may therefore be read to completion
-// (returning io.EOF) without ErrCacheLimit ever being returned. The guarantee
-// is that the cache will not grow unboundedly, not that it never exceeds n.
+// Because detecting that the source has more than n bytes requires reading past
+// n, the cache may exceed n by up to one source read: the read that grows the
+// cache beyond n returns ErrCacheLimit together with the bytes it read, and the
+// Stream enters a terminal error state (see Stream.Err). A source of exactly n
+// bytes completes normally with io.EOF. The guarantee is that the cache will not
+// grow unboundedly, not that it never exceeds n.
 func MaxCacheSize(n int) Option {
 	return optionFunc(func(s *Stream) {
 		s.maxCacheSize = n
@@ -341,23 +342,6 @@ TOP:
 		}
 	}
 
-	// Before growing the cache, enforce the cache size limit, if one is set. If
-	// the cache has already grown beyond the limit, we refuse to read more from
-	// src, and put the Stream into a terminal error state with ErrCacheLimit.
-	// Reading s.size here is safe: we hold the src lock, and only the src lock
-	// holder mutates s.size while the cache is in use.
-	if s.maxCacheSize > 0 && s.size > s.maxCacheSize {
-		s.cMu.Lock() // write lock
-		if s.readErr == nil {
-			s.readErr = ErrCacheLimit
-			close(s.srcDoneCh)
-		}
-		err = s.readErr
-		s.cMu.Unlock()   // write unlock
-		s.srcMu.Unlock() // src unlock
-		return 0, err
-	}
-
 	// OK, this time, we're REALLY going to read from src.
 	n, err = s.src.Read(p)
 	if n == 0 && err == nil {
@@ -369,14 +353,27 @@ TOP:
 
 	// Now we need to update the cache, so we need to get the write lock.
 	s.cMu.Lock() // write lock
-	s.readErr = err
 	if n > 0 {
 		s.size += n
 		s.cache = append(s.cache, p[:n]...)
 	}
 
+	// Enforce the cache size limit, if one is set. If this read grew the cache
+	// beyond the limit, the Stream is terminally over-limit: we report
+	// ErrCacheLimit (along with the bytes just read) instead of src's error, so
+	// that the terminal state is established the moment the cache crosses the
+	// limit, rather than on a subsequent read. The check is strictly
+	// greater-than, so a source of exactly maxCacheSize bytes does not trip it.
+	// Because the limit is enforced here, on every append, the cache can exceed
+	// maxCacheSize by at most one source read before the Stream is terminated.
+	if s.maxCacheSize > 0 && s.size > s.maxCacheSize {
+		err = ErrCacheLimit
+	}
+	s.readErr = err
+
 	if err != nil {
-		// We received an error from src, so it's done.
+		// Either src returned an error, or we hit the cache limit. Either way,
+		// src is never read from again, so the Stream is done.
 		close(s.srcDoneCh)
 	}
 
