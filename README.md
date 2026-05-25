@@ -155,7 +155,7 @@ use the cache.
 
 ## Changelog
 
-### Unreleased
+### v0.4.0 - 2026-05-25
 
 #### Added
 
