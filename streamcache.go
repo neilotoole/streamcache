@@ -144,7 +144,8 @@ func (f optionFunc) apply(s *Stream) { f(s) }
 // The limit applies only while the cache is in use: once the Stream is sealed
 // (see Stream.Seal) and only the final Reader remains, that Reader reads
 // directly from the source, bypassing the cache, and is not subject to the
-// limit.
+// limit. If the limit was already exceeded before sealing, however, the Stream
+// is already in its terminal error state, and sealing does not lift it.
 //
 // Because detecting that the source has more than n bytes requires reading past
 // n, the cache may exceed n by up to one source read: the read that grows the
