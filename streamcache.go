@@ -541,19 +541,19 @@ func (s *Stream) Size() int {
 	return s.size
 }
 
-// Total blocks until the source reader is fully read, and returns the total
-// number of bytes read from the source, and any read error other than io.EOF
-// returned by the source. If ctx is cancelled, zero and the context's cause
-// error (per context.Cause) are returned. If source returned a non-EOF error,
-// that error and the total number of bytes read are returned.
+// Total blocks until the Stream reaches a terminal state — the source is fully
+// read (io.EOF), the source returns a non-EOF error, or the cache size limit
+// (see MaxCacheSize) is exceeded — and returns the number of bytes read from the
+// source so far, along with any terminal error other than io.EOF. When the
+// cache size limit is what ended the stream, the returned size may be less than
+// the source's full length. If ctx is cancelled, zero and the context's cause
+// error (per context.Cause) are returned. If the source returned a non-EOF
+// error, that error and the number of bytes read are returned.
 //
 // Note that Total only returns if the channel returned by Stream.Filled
 // is closed, but Total can return even if Stream.Done is not closed.
 // That is to say, Total returning does not necessarily mean that all readers
 // are closed.
-//
-// If the cache size limit configured via MaxCacheSize is exceeded, Total
-// returns the number of bytes cached so far and ErrCacheLimit.
 //
 // See also: Stream.Size, Stream.Err, Stream.Filled, Stream.Done.
 func (s *Stream) Total(ctx context.Context) (size int, err error) {
@@ -576,13 +576,11 @@ func (s *Stream) Total(ctx context.Context) (size int, err error) {
 	}
 }
 
-// Err returns the first error (if any) that was returned by the underlying
-// source reader, which may be io.EOF. After the source reader returns an
-// error, it is never read from again, and the channel returned by Stream.Filled
-// is closed.
-//
-// Err also returns ErrCacheLimit if the cache size limit configured via
-// MaxCacheSize was exceeded.
+// Err returns the first error (if any) that put the Stream into its terminal
+// state: an error returned by the underlying source reader (which may be
+// io.EOF), or ErrCacheLimit if the cache size limit (see MaxCacheSize) was
+// exceeded. Once the Stream is terminal, the source is never read from again,
+// and the channel returned by Stream.Filled is closed.
 func (s *Stream) Err() error {
 	s.cMu.RLock()         // read lock
 	defer s.cMu.RUnlock() // read unlock
