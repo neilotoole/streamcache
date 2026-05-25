@@ -366,7 +366,12 @@ TOP:
 	// greater-than, so a source of exactly maxCacheSize bytes does not trip it.
 	// Because the limit is enforced here, on every append, the cache can exceed
 	// maxCacheSize by at most one source read before the Stream is terminated.
-	if s.maxCacheSize > 0 && s.size > s.maxCacheSize {
+	//
+	// A genuine source error returned by this same read takes precedence: it is
+	// more diagnostic than ErrCacheLimit, so we only override err when src
+	// returned no error or io.EOF (io.EOF being normal completion, not a
+	// failure, is superseded by ErrCacheLimit).
+	if s.maxCacheSize > 0 && s.size > s.maxCacheSize && (err == nil || errors.Is(err, io.EOF)) {
 		err = ErrCacheLimit
 	}
 	s.readErr = err

@@ -1027,6 +1027,29 @@ func TestMaxCacheSize_OverLimitWithBundledEOF(t *testing.T) {
 	require.True(t, errors.Is(s.Err(), streamcache.ErrCacheLimit))
 }
 
+func TestMaxCacheSize_SourceErrorTakesPrecedence(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const limit = 1000
+	srcErr := errors.New("boom")
+	// The source returns limit+500 bytes together with a non-EOF error in a
+	// single read; those bytes push the cache past the limit. The genuine
+	// source error is reported, not ErrCacheLimit (io.EOF, by contrast, is
+	// superseded by ErrCacheLimit — see TestMaxCacheSize_OverLimitWithBundledEOF).
+	src := newErrorAfterNReader(limit+500, srcErr)
+	s := streamcache.New(src, streamcache.MaxCacheSize(limit))
+	r := s.NewReader(ctx)
+	defer r.Close()
+
+	buf := make([]byte, limit+500)
+	n, err := r.Read(buf)
+	require.Equal(t, limit+500, n)
+	require.True(t, errors.Is(err, srcErr))
+	require.False(t, errors.Is(err, streamcache.ErrCacheLimit))
+	require.True(t, errors.Is(s.Err(), srcErr))
+}
+
 func TestStreamSource(t *testing.T) {
 	t.Parallel()
 
